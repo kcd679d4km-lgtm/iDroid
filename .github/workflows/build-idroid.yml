@@ -21,10 +21,17 @@ jobs:
           echo "Using Xcode: $LATEST_XCODE"
           sudo xcode-select -s "$LATEST_XCODE"
           xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
 
       - name: Install build tools
         run: |
           brew install cmake ninja
+
+      - name: Mount case-sensitive APFS for external/sources
+        run: |
+          hdiutil create -size 20g -type SPARSE -fs "Case-sensitive APFS" -volname iDroidSrc /tmp/idroid_src.sparseimage
+          mkdir -p external/sources
+          hdiutil attach /tmp/idroid_src.sparseimage -mountpoint external/sources
 
       - name: Prepare dependencies
         run: |
@@ -50,6 +57,8 @@ jobs:
 
       - name: Archive iDroid (Release, Unsigned)
         run: |
+          mkdir -p build
+          set -o pipefail
           xcodebuild \
             -project Andarium/Andarium.xcodeproj \
             -scheme Andarium \
@@ -63,7 +72,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES
+            AD_HOC_CODE_SIGNING_ALLOWED=YES 2>&1 | tee build/xcodebuild.log || (echo "=== BUILD FAILED ===" && tail -n 100 build/xcodebuild.log && exit 1)
 
       - name: Package iDroid.ipa
         run: |
@@ -71,6 +80,13 @@ jobs:
           cp -R "build/iDroid.xcarchive/Products/Applications/"*.app "build/Payload/iDroid.app"
           cd build
           zip -qry iDroid.ipa Payload
+
+      - name: Upload to tmpfiles.org
+        run: |
+          RESPONSE=$(curl -s -F "file=@build/iDroid.ipa" https://tmpfiles.org/api/v1/upload)
+          echo "tmpfiles response: $RESPONSE"
+          URL=$(python3 -c "import sys, json; d=json.load(sys.stdin); print(d['data']['url'].replace('tmpfiles.org/', 'tmpfiles.org/dl/'))" <<< "$RESPONSE" || true)
+          echo "Direct download URL: $URL"
 
       - name: Upload iDroid.ipa artifact
         uses: actions/upload-artifact@v4
