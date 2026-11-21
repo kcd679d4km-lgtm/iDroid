@@ -508,7 +508,8 @@ public:
                 [engine_ connect:player_
                               to:engine_.mainMixerNode
                           format:format_];
-#endif#if !TARGET_OS_IPHONE
+#endif
+#if !TARGET_OS_IPHONE
                 applyOutputCycle();
 #endif
             }
