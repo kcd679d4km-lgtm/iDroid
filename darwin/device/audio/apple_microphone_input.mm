@@ -158,6 +158,7 @@ private:
             const std::weak_ptr<Capture> weak = weak_from_this();
             const auto tap = std::make_shared<MicrophoneTap>(converter, converted, *ring, channels,
                                                              protocol::sampleRate);
+#ifdef __IPHONE_27_0
             NSError* tapError = nil;
             const BOOL tapped = [input
                 installTapOnBus:0
@@ -172,6 +173,15 @@ private:
                 closeSession();
                 return false;
             }
+#else
+            [input installTapOnBus:0
+                        bufferSize:static_cast<AVAudioFrameCount>(
+                                       inputFormat.sampleRate * tapSeconds)
+                            format:inputFormat
+                             block:^(AVAudioPCMBuffer* buffer, AVAudioTime* when) {
+                                 tap->receive(buffer, when);
+                             }];
+#endif
             [created prepare];
             NSError* startError = nil;
             if (![created startAndReturnError:&startError]) {
