@@ -32,7 +32,8 @@ jobs:
 
       - name: Install build tools
         run: |
-          brew install cmake ninja meson pkg-config
+          brew install cmake ninja meson pkg-config autoconf automake libtool bison flex
+          python3 -m pip install --break-system-packages mako packaging pyyaml || pip3 install mako packaging pyyaml
 
       - name: Mount case-sensitive APFS for external/sources
         run: |
