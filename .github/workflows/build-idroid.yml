@@ -1,0 +1,80 @@
+name: Build iDroid IPA
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        run: |
+          LATEST_XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -n 1)
+          echo "Using Xcode: $LATEST_XCODE"
+          sudo xcode-select -s "$LATEST_XCODE"
+          xcodebuild -version
+
+      - name: Install build tools
+        run: |
+          brew install cmake ninja
+
+      - name: Prepare dependencies
+        run: |
+          ./dependencies/prepare.sh --product all
+
+      - name: Fetch prebuilt Android 17 (LineageOS 24) & kernel release
+        run: |
+          mkdir -p .build/android/releases
+          curl -fL --retry 3 -o /tmp/lineage24.tar.gz \
+            "https://github.com/imxieyi/Kernarium/releases/download/1.0b15-release/lineage24-mainline6.18-4k-20261115-los24-r28.tar.gz"
+          tar -xzf /tmp/lineage24.tar.gz -C .build/android/releases
+          rm -f /tmp/lineage24.tar.gz
+
+      - name: Configure and build Kernarium Android iOS runtime
+        run: |
+          cmake --preset kernarium-ios-device-android
+          cmake --build --preset kernarium-ios-device-android
+          ./Kernarium/scripts/package-ios-frameworks.sh --runtimes android
+
+      - name: Stage Android system image
+        run: |
+          python3 ./Andarium/scripts/stage-system-image.py
+
+      - name: Archive iDroid (Release, Unsigned)
+        run: |
+          xcodebuild \
+            -project Andarium/Andarium.xcodeproj \
+            -scheme Andarium \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/iDroid.xcarchive \
+            archive \
+            PRODUCT_BUNDLE_IDENTIFIER=com.idroid.app \
+            INFOPLIST_KEY_CFBundleDisplayName=iDroid \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
+
+      - name: Package iDroid.ipa
+        run: |
+          mkdir -p build/Payload
+          cp -R "build/iDroid.xcarchive/Products/Applications/"*.app "build/Payload/iDroid.app"
+          cd build
+          zip -qry iDroid.ipa Payload
+
+      - name: Upload iDroid.ipa artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iDroid-ipa
+          path: build/iDroid.ipa
+          if-no-files-found: error

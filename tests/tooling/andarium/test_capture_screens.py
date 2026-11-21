@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Andarium/scripts/capture-screens.py takes one run at a time into a directory.
+
+Two runs into the same --out would share the screenshots' working files and
+read and write manifest.json. The second run refuses at once and names the
+first; the lock is released when a run ends, however it ends. No test here
+needs a Simulator: the Simulator calls are replaced, and a refused run stops
+before any is made.
+"""
+
+from __future__ import annotations
+
+__import__("sys").dont_write_bytecode = True
+
+import contextlib
+import importlib.util
+import io
+import os
+import pathlib
+import select
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from unittest import mock
+
+REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
+SCRIPT = REPOSITORY / "Andarium/scripts/capture-screens.py"
+BOUND_SECONDS = 30
+
+HOLDER = """
+import importlib.util, pathlib, sys, time
+spec = importlib.util.spec_from_file_location("capture_screens", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules["capture_screens"] = module
+spec.loader.exec_module(module)
+with module.output_lock(pathlib.Path(sys.argv[2])):
+    print("held", flush=True)
+    time.sleep(120)
+"""
+
+
+def load_script():
+    spec = importlib.util.spec_from_file_location("capture_screens", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["capture_screens"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class CaptureLockTests(unittest.TestCase):
+    def setUp(self):
+        self.script = load_script()
+        self.holders: list[subprocess.Popen] = []
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.out = pathlib.Path(scratch.name) / "shots"
+
+    def tearDown(self):
+        for holder in self.holders:
+            holder.kill()
+            holder.wait(timeout=BOUND_SECONDS)
+            holder.stdout.close()
+
+    def run_main(self, *extra: str) -> tuple[object, str]:
+        """The script's main() with the Simulator calls replaced, and what it printed to stderr."""
+        stderr = io.StringIO()
+        with mock.patch.object(self.script, "device_names", return_value={"UDID": "Fake iPad"}), \
+                mock.patch.object(self.script, "simctl"), \
+                mock.patch.object(self.script, "preflight", return_value="portrait"), \
+                contextlib.redirect_stderr(stderr):
+            try:
+                result = self.script.main(["--out", str(self.out), "--device", "UDID", "--only", "^no-such-shot$", *extra])
+            except SystemExit as exit:
+                result = exit.code
+        return result, stderr.getvalue()
+
+    def hold_from_another_process(self) -> subprocess.Popen:
+        self.out.mkdir(parents=True, exist_ok=True)
+        holder = subprocess.Popen(
+            [sys.executable, "-B", "-c", HOLDER, str(SCRIPT), str(self.out)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        )
+        self.holders.append(holder)
+        ready, _, _ = select.select([holder.stdout], [], [], BOUND_SECONDS)
+        self.assertTrue(ready, "the holder did not take the lock in time")
+        self.assertEqual(holder.stdout.readline().strip(), "held")
+        return holder
+
+    def assertFree(self):
+        with self.script.output_lock(self.out):
+            pass
+
+    def test_a_run_into_a_held_directory_refuses_at_once_and_names_the_holder(self):
+        self.out.mkdir()
+        with self.script.output_lock(self.out):
+            started = time.monotonic()
+            with mock.patch.object(self.script, "device_names", side_effect=AssertionError("a refused run reached the Simulator")):
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    result = self.script.main(["--out", str(self.out), "--device", "UDID"])
+            self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(result, 1)
+        message = stderr.getvalue()
+        self.assertIn("another capture is running", message)
+        self.assertIn(str(self.out), message)
+        self.assertIn(f"pid {os.getpid()}", message)
+        self.assertFalse((self.out / "manifest.json").exists(), "a refused run wrote the manifest")
+
+    def test_the_command_line_refuses_too_and_the_message_names_the_other_process(self):
+        holder = self.hold_from_another_process()
+        done = subprocess.run(
+            [sys.executable, "-B", str(SCRIPT), "--out", str(self.out), "--device", "NO-SUCH-UDID"],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=BOUND_SECONDS, check=False,
+        )
+        self.assertEqual(done.returncode, 1, done.stderr)
+        self.assertIn("another capture is running", done.stderr)
+        self.assertIn(f"pid {holder.pid}", done.stderr)
+        self.assertNotIn("no Simulator", done.stderr)
+        self.assertFalse((self.out / "manifest.json").exists())
+
+    def test_a_killed_holder_leaves_the_directory_free(self):
+        holder = self.hold_from_another_process()
+        with self.assertRaises(self.script.OutputBusy):
+            with self.script.output_lock(self.out):
+                pass
+        holder.send_signal(signal.SIGKILL)
+        holder.wait(timeout=BOUND_SECONDS)
+        self.assertFree()
+
+    def test_the_lock_is_released_when_a_run_ends(self):
+        self.assertEqual(self.run_main()[0], 0)
+        self.assertTrue((self.out / "manifest.json").is_file())
+        self.assertFree()
+        self.assertEqual(self.run_main()[0], 0, "a second run after the first")
+
+    def test_the_lock_is_released_when_a_run_stops_on_an_unknown_device(self):
+        stderr = io.StringIO()
+        with mock.patch.object(self.script, "device_names", return_value={}), contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as stopped:
+                self.script.main(["--out", str(self.out), "--device", "UDID"])
+        self.assertIn("no Simulator UDID", str(stopped.exception.code))
+        self.assertFree()
+
+    def test_the_lock_is_released_when_a_run_raises(self):
+        with mock.patch.object(self.script, "device_names", side_effect=RuntimeError("simctl failed")):
+            with self.assertRaises(RuntimeError):
+                self.script.main(["--out", str(self.out), "--device", "UDID"])
+        self.assertFree()
+
+    def test_the_lock_is_released_when_a_run_is_interrupted(self):
+        with mock.patch.object(self.script, "device_names", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.script.main(["--out", str(self.out), "--device", "UDID"])
+        self.assertFree()
+
+    def test_other_directories_are_not_held(self):
+        self.out.mkdir()
+        other = self.out.parent / "other"
+        other.mkdir()
+        with self.script.output_lock(self.out), self.script.output_lock(other):
+            pass
+
+    def test_listing_the_shots_needs_no_directory_and_takes_no_lock(self):
+        listing = io.StringIO()
+        with self.script.output_lock(self.out.parent), contextlib.redirect_stdout(listing):
+            self.assertEqual(self.script.main(["--list"]), 0)
+        self.assertIn("home\tHome", listing.getvalue())
+
+
+class CaptureLanguageTests(unittest.TestCase):
+    """`--language` launches the Preview in one of Andarium's languages and names it in the shot."""
+
+    def setUp(self):
+        self.script = load_script()
+        self.shot = next(shot for shot in self.script.SHOTS if shot.id == "home")
+
+    def test_without_a_language_the_launch_is_the_simulators_own(self):
+        self.assertEqual(self.shot.launch_arguments(), ["-screen", "home"])
+
+    def test_a_language_adds_its_locale_to_the_launch(self):
+        self.assertEqual(
+            self.shot.launch_arguments("zh-Hant"),
+            ["-screen", "home", "-AppleLanguages", "(zh-Hant)", "-AppleLocale", "zh_TW"])
+
+    def test_every_language_of_the_application_is_offered(self):
+        self.assertEqual(sorted(self.script.LANGUAGES), ["en", "ja", "zh-Hans", "zh-Hant"])
+
+    def test_an_unknown_language_is_refused_by_the_command_line(self):
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            self.script.main(["--language", "fr", "--list"])
+
+    def test_the_new_shots_of_the_localization_are_listed(self):
+        listing = io.StringIO()
+        with contextlib.redirect_stdout(listing):
+            self.assertEqual(self.script.main(["--list"]), 0)
+        for shot in ("snapshots", "snapshots-detail", "whatsnew-open"):
+            self.assertIn(f"{shot}\t", listing.getvalue())
+
+
+class FeedbackShotTests(unittest.TestCase):
+    """The shots of Send feedback need a Preview built with it; any other Preview skips them."""
+
+    def setUp(self):
+        self.script = load_script()
+        self.shots = [shot for shot in self.script.SHOTS if shot.feedback]
+
+    def test_the_feedback_shots_are_listed_and_named_apart(self):
+        self.assertGreaterEqual(len(self.shots), 10)
+        self.assertTrue(all(shot.id.startswith("feedback-") for shot in self.shots))
+        self.assertEqual({shot.group for shot in self.shots}, {"Feedback"})
+        ids = [shot.id for shot in self.script.SHOTS]
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_a_preview_without_the_feature_is_no_reason_to_wait_and_is_named(self):
+        shot = self.shots[0]
+        state = {"pid": 7, "screen": shot.screen, "state": "active"}
+        with mock.patch.object(self.script, "alive", return_value=True), \
+                mock.patch.object(self.script, "app_state", return_value=state):
+            self.assertIn("FEEDBACK_ADDRESS", self.script.not_in_front("UDID", 7, shot))
+            state["feedback"] = True
+            # The sheet is kept for a picture only once it is open and its draft is made.
+            self.assertIn("draft", self.script.not_in_front("UDID", 7, shot))
+            state["feedbackReady"] = True
+            self.assertIsNone(self.script.not_in_front("UDID", 7, shot))
+
+    def test_the_other_shots_ask_nothing_of_the_build(self):
+        shot = next(shot for shot in self.script.SHOTS if not shot.feedback and not shot.tipjar)
+        state = {"pid": 7, "screen": shot.screen, "state": "active"}
+        with mock.patch.object(self.script, "alive", return_value=True), \
+                mock.patch.object(self.script, "app_state", return_value=state):
+            self.assertIsNone(self.script.not_in_front("UDID", 7, shot))
+
+
+class TipJarShotTests(unittest.TestCase):
+    """The shots of Buy me tokens need a Preview built with it; any other Preview skips them."""
+
+    def setUp(self):
+        self.script = load_script()
+        self.shots = [shot for shot in self.script.SHOTS if shot.tipjar]
+
+    def test_the_shots_are_listed_and_named_apart(self):
+        self.assertGreaterEqual(len(self.shots), 10)
+        self.assertTrue(all(shot.id.startswith("tipjar") for shot in self.shots))
+        self.assertEqual({shot.group for shot in self.shots}, {"Buy me tokens"})
+        self.assertFalse(any(shot.feedback for shot in self.shots))
+        ids = [shot.id for shot in self.script.SHOTS]
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_a_preview_without_the_feature_is_no_reason_to_wait_and_is_named(self):
+        shot = self.shots[0]
+        state = {"pid": 7, "screen": shot.screen, "state": "active", "feedback": True}
+        with mock.patch.object(self.script, "alive", return_value=True), \
+                mock.patch.object(self.script, "app_state", return_value=state):
+            self.assertIn("TIP_", self.script.not_in_front("UDID", 7, shot))
+            state["tipjar"] = True
+            self.assertIsNone(self.script.not_in_front("UDID", 7, shot))
+
+    def test_a_feedback_shot_does_not_need_the_tip_jar(self):
+        shot = next(shot for shot in self.script.SHOTS if shot.feedback)
+        state = {"pid": 7, "screen": shot.screen, "state": "active", "feedback": True, "feedbackReady": True}
+        with mock.patch.object(self.script, "alive", return_value=True), \
+                mock.patch.object(self.script, "app_state", return_value=state):
+            self.assertIsNone(self.script.not_in_front("UDID", 7, shot))
+
+
+class FeedbackMenuShotTests(unittest.TestCase):
+    """Send feedback is reached from Home's toolbar menu, not from Info."""
+
+    def setUp(self):
+        self.script = load_script()
+
+    def test_no_shot_opens_feedback_over_info(self):
+        self.assertFalse([shot.id for shot in self.script.SHOTS if "info" in shot.screen and shot.feedback])
+
+    def test_the_menu_is_captured_open_on_home_and_on_welcome(self):
+        menus = {shot.id: shot.screen for shot in self.script.SHOTS if shot.id.startswith("feedback-menu")}
+        self.assertEqual(menus, {"feedback-menu-home": "home-menu", "feedback-menu-welcome": "welcome-menu"})
+        self.assertTrue(all(shot.feedback for shot in self.script.SHOTS if shot.id.startswith("feedback-menu")))
+
+
+if __name__ == "__main__":
+    unittest.main()
