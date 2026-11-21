@@ -247,6 +247,7 @@ struct Output final {
     output.player = [[AVAudioPlayerNode alloc] init];
     [output.engine attachNode:output.player];
     if (format != nil && outputRouteUp(output.engine)) {
+#ifdef __IPHONE_27_0
         NSError* error = nil;
         if ([output.engine connect:output.player
                                 to:output.engine.mainMixerNode
@@ -255,6 +256,13 @@ struct Output final {
             [output.engine prepare];
             output.connected = true;
         }
+#else
+        [output.engine connect:output.player
+                            to:output.engine.mainMixerNode
+                        format:format];
+        [output.engine prepare];
+        output.connected = true;
+#endif
     }
     return output;
 }
@@ -484,6 +492,7 @@ public:
             // replacement is made, with the session active.
             if (!health_.mustReplace(outputRouteUp(engine_))) {
                 [engine_ disconnectNodeOutput:player_];
+#ifdef __IPHONE_27_0
                 NSError* connectError = nil;
                 if (![engine_ connect:player_
                                    to:engine_.mainMixerNode
@@ -495,7 +504,11 @@ public:
                     fault("the engine would not connect");
                     return false;
                 }
-#if !TARGET_OS_IPHONE
+#else
+                [engine_ connect:player_
+                              to:engine_.mainMixerNode
+                          format:format_];
+#endif#if !TARGET_OS_IPHONE
                 applyOutputCycle();
 #endif
             }
