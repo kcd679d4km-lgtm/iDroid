@@ -9,7 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # The one owner of the warning policy: every first-party C++ and
 # Objective-C++ source builds warning-clean. Hand-written assembly opts in
 # with a source COMPILE_OPTIONS property. Objective-C++ always uses ARC.
-add_compile_options("$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wall;-Wextra;-Werror;-Wno-deprecated-declarations>"
+add_compile_options("$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wall;-Wextra;-Werror;-Wno-deprecated-declarations;-Wno-unguarded-availability;-Wno-unguarded-availability-new>"
     "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>")
 
 list(APPEND CMAKE_MODULE_PATH
