@@ -55,17 +55,24 @@ jobs:
           ./dependencies/prepare.sh --product apple-gpu-vulkan-experiment
           ./dependencies/build-apple-gpu.sh --platform ios
 
-      - name: Fetch prebuilt Android 17 (LineageOS 24) release
+      - name: Fetch prebuilt Android 17 (LineageOS 24) & kernel release
         run: |
-          mkdir -p .build/android/releases
+          mkdir -p .build/android/releases .build/kernel/artifacts
           curl -fL --retry 3 -o /tmp/lineage24.tar.gz \
             "https://github.com/imxieyi/Kernarium/releases/download/1.0b15-release/lineage24-mainline6.18-4k-20261115-los24-r28.tar.gz"
           tar -xzf /tmp/lineage24.tar.gz -C .build/android/releases
           rm -f /tmp/lineage24.tar.gz
 
+          curl -fL --retry 3 -o /tmp/android-kernel.tar.gz \
+            "https://github.com/imxieyi/Kernarium/releases/download/1.0b15-release/android-6.18-arm64-4k-20261117-6.18.60-vd2.tar.gz"
+          tar -xzf /tmp/android-kernel.tar.gz -C .build/kernel/artifacts
+          rm -f /tmp/android-kernel.tar.gz
+
       - name: Configure and build Kernarium Android iOS runtime
         run: |
-          cmake --preset kernarium-ios-device-android
+          KERNEL_DIR=$(ls -d "$PWD/.build/kernel/artifacts/android-6.18-arm64-4k-"* | head -n 1)
+          echo "Using kernel artifact: $KERNEL_DIR"
+          cmake --preset kernarium-ios-device-android -DUML_ANDROID17_KERNEL_ARTIFACT_DIR="$KERNEL_DIR"
           cmake --build --preset kernarium-ios-device-android
           ./Kernarium/scripts/package-ios-frameworks.sh --runtimes android
 
