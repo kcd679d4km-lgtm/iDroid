@@ -322,97 +322,6 @@ void test_store()
 	require(space.engine().diagnostics().registration_failures == 0);
 }
 
-/* The kernel stores into another process's page (ptrace, /proc/pid/mem,
- * process_vm_writev) and names that process's generation: the code another
- * generation compiled runs the new bytes, whatever the target's own view of
- * the frame is. The target maps it as data, maps nothing at the page, or
- * maps it as code (the control). */
-void test_a_remote_kernel_write_reaches_the_compiled_code()
-{
-	const Clean clean;
-	darwin_uml_static_vm_require_coherent_kernel_code_writes();
-	constexpr std::uint64_t executable = 0x1a00'0000;
-	constexpr std::uint64_t target_address = 0x2a00'0000;
-	enum class View { data, absent, code };
-	unsigned long generation = 9250;
-	/* Every view is run, so one run names each that fails. */
-	unsigned failed = 0;
-	for (const auto view : {View::data, View::absent, View::code}) {
-		const char *name = view == View::data ? "data view" :
-			view == View::absent ? "page the target does not map" :
-			"code view";
-		ScratchBacking frame{"uml-x86-jit-alias-remote-XXXXXX", page};
-		load_return(frame, 1);
-		Space reader{generation++};
-		Space target{generation++};
-		reader.map(executable, frame, 0, rx, 1);
-		if (view == View::data)
-			target.map(target_address, frame, 0, rw, 0);
-		else if (view == View::code)
-			target.map(target_address, frame, 0, rx, 1);
-		require(reader.to_system_call(executable) == 1);
-		load_return(frame, 2);
-		require(darwin_uml_static_vm_invalidate_code_generation(
-			target.generation(), target_address, page) == 0);
-		if (reader.to_system_call(executable) != 2) {
-			std::fprintf(stderr, "a remote write into a %s did not reach "
-				"the compiled code\n", name);
-			++failed;
-		}
-	}
-	require(failed == 0, "a remote kernel write left compiled code running");
-}
-
-/* The kernel pins a frame to write it and names it. Between the pin and the
- * write the target replaces what is mapped at the address with another frame,
- * so the call meets a page that is not the frame written, and the code compiled
- * from the frame written must still hear of the write. The reader runs once
- * more after the replacement, so no publication of the replacement can account
- * for what it hears. */
-void test_a_remote_write_after_the_target_remapped()
-{
-	const Clean clean;
-	darwin_uml_static_vm_require_coherent_kernel_code_writes();
-	constexpr std::uint64_t executable = 0x1b00'0000;
-	constexpr std::uint64_t target_address = 0x2b00'0000;
-	enum class Replacement { data, code };
-	unsigned long generation = 9350;
-	unsigned failed = 0;
-	for (const auto replacement : {Replacement::data, Replacement::code}) {
-		const char *name = replacement == Replacement::data ?
-			"a data view of another frame" : "a code view of another frame";
-		ScratchBacking pinned{"uml-x86-jit-alias-remap-p-XXXXXX", page};
-		ScratchBacking other{"uml-x86-jit-alias-remap-o-XXXXXX", page};
-		load_return(pinned, 1);
-		load_return(other, 3);
-		Space reader{generation++};
-		Space target{generation++};
-		reader.map(executable, pinned, 0, rx, 1);
-		target.map(target_address, pinned, 0, rw, 0);
-		require(reader.to_system_call(executable) == 1);
-		/* The pin, then the replacement. */
-		target.unmap(target_address);
-		if (replacement == Replacement::data)
-			target.map(target_address, other, 0, rw, 0);
-		else
-			target.map(target_address, other, 0, rx, 1);
-		require(reader.to_system_call(executable) == 1);
-		/* The store reaches the pinned frame, which the call names. */
-		load_return(pinned, 2);
-		require(darwin_uml_static_vm_invalidate_code_frame(
-			target.generation(), target_address, page, pinned.descriptor(),
-			0) == 0);
-		if (reader.to_system_call(executable) != 2) {
-			std::fprintf(stderr, "a remote write after the target replaced "
-				"its mapping with %s did not reach the compiled code\n",
-				name);
-			++failed;
-		}
-	}
-	require(failed == 0, "a remote write after a remap left compiled code "
-		"running");
-}
-
 void test_running_block()
 {
 	const Clean clean;
@@ -1013,21 +922,10 @@ void test_helper_stores_reach_the_next_instruction()
 
 int main(int argc, char **argv)
 {
-	/* A row's name as the first argument runs that row alone: "writer",
-	 * "remote". */
+	/* A row's name as the first argument runs that row alone: "writer". */
 	if (argc > 1 && std::strcmp(argv[1], "writer") == 0) {
 		test_a_writer_without_a_registry();
 		std::puts("writer without a registry ok");
-		return EXIT_SUCCESS;
-	}
-	if (argc > 1 && std::strcmp(argv[1], "remote") == 0) {
-		test_a_remote_kernel_write_reaches_the_compiled_code();
-		std::puts("remote kernel write ok");
-		return EXIT_SUCCESS;
-	}
-	if (argc > 1 && std::strcmp(argv[1], "remapped") == 0) {
-		test_a_remote_write_after_the_target_remapped();
-		std::puts("remote write after a remap ok");
 		return EXIT_SUCCESS;
 	}
 	const auto start = FrameAccounting::diagnostics();
@@ -1057,10 +955,6 @@ int main(int argc, char **argv)
 	std::puts("writer without a registry ok");
 	test_helper_stores_reach_the_next_instruction();
 	std::puts("helper stores ok");
-	test_a_remote_kernel_write_reaches_the_compiled_code();
-	std::puts("remote kernel write ok");
-	test_a_remote_write_after_the_target_remapped();
-	std::puts("remote write after a remap ok");
 	const auto now = FrameAccounting::diagnostics();
 	require(now.holder_leaks == start.holder_leaks, "a holder leaked");
 	require(now.unquiesced_holder_removals == start.unquiesced_holder_removals);

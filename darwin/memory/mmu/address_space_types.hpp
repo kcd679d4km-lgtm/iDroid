@@ -33,10 +33,6 @@ struct Mapping final {
 	int protection;
 	bool guest_code;
 	bool guest_writable;
-	/* The kernel's fact that the page belongs to a file system that cannot
-	 * change under the guest (meaningful only with guest_code). It belongs to
-	 * the mapping: a mapping of the same frame without it never shares. */
-	bool guest_immutable;
 };
 
 struct AddressSpaceLifetime final {

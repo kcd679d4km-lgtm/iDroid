@@ -6,11 +6,7 @@ Each case builds a synthetic Git repository that holds the files the check
 reads (the input list, the descriptors, the kernel metadata and fragments), a
 staged system and a built application with a runtime framework whose Mach-O
 carries a kernel banner and configuration, then changes one thing and runs the
-script on it. The staged and the packaged system disk are tied to the accepted
-release as installed below .build/android/releases, not to a digest their own
-layout names, and a repeated JSON key is refused. An unsigned proof image, which a developer build may embed, is
-refused in the staged and the packaged system, and the Xcode build phase that
-runs the check does so for the AppStore and TestFlight configurations only.
+script on it.
 """
 
 from __future__ import annotations
@@ -21,7 +17,6 @@ import gzip
 import importlib.util
 import json
 import os
-import re
 import shutil
 import struct
 import subprocess
@@ -35,17 +30,9 @@ SCRIPT = REPOSITORY / "scripts/check-embedded-artifacts.py"
 sys.path.insert(0, str(REPOSITORY / "android/lineage-24/tools"))
 import release_inputs  # noqa: E402
 
-sys.path.insert(0, str(REPOSITORY / "tools/aot"))
-import release_artifact  # noqa: E402
-
-
 RELEASE_ID = "20261201-los24-r99"
-# The system partition digest the staged layout states, which the AOT blob of
-# the release binds to as well as to the manifest's digest.
-AOT_SYSTEM_SHA256 = "bb" * 32
 KERNEL_ID = "20261201-6.18.99-ks99"
 KERNEL_RELEASE = "6.18.99-gfeedface0000"
-DISK = b"disk-bytes" * 100
 TREE = "a" * 40
 OTHER_TREE = "b" * 40
 FRAMEWORK = "KRuntime_Android_6_18_4K"
@@ -58,8 +45,6 @@ CONFIG = "CONFIG_UML=y\nCONFIG_MODULES=n\nCONFIG_BINDER=y\n# CONFIG_NFS_FS is no
 INPUTS = (
     "input\tandroid/lineage-24/overlay\tthe product tree\n"
     "input\tandroid/lineage-24/tools/publish-release.py\twrites the manifest\n"
-    "input\tandroid/lineage-24/third_party\tthe pins of the sources the image builds\n"
-    "input\tdependencies/patches/talkback\tthe series applied to TalkBack\n"
     "excluded\tandroid/lineage-24/README.md\tdocumentation\n"
     "excluded\tandroid/lineage-24/metadata/accepted-release.env\tthe acceptance record\n"
     "excluded\tandroid/lineage-24/support/release/input-paths.tsv\tthis list\n"
@@ -85,24 +70,11 @@ def commit(repo: Path, message: str) -> str:
     return git(repo, "rev-parse", "HEAD")
 
 
-LC_LOAD_DYLIB = 0x0C
-LC_LOAD_WEAK_DYLIB = 0x80000018
-
-
-def dylib_command(command: int, name: str) -> bytes:
-    """One load command that names a dependency by install name."""
-    raw = name.encode() + b"\0"
-    raw += b"\0" * (-len(raw) % 8)
-    return struct.pack("<IIIIII", command, 24 + len(raw), 24, 2, 0x10000, 0x10000) + raw
-
-
-def macho(sections: dict, dylibs: tuple = ()) -> bytes:
-    """A thin arm64 Mach-O whose __TEXT segment holds the given sections and
-    that requires the given dependencies, as (load command, install name)."""
+def macho(sections: dict) -> bytes:
+    """A thin arm64 Mach-O whose __TEXT segment holds the given sections."""
     names = list(sections)
     command_size = 72 + 80 * len(names)
-    required = b"".join(dylib_command(command, name) for command, name in dylibs)
-    offset = 32 + command_size + len(required)
+    offset = 32 + command_size
     entries = b""
     payload = b""
     for name in names:
@@ -116,9 +88,8 @@ def macho(sections: dict, dylibs: tuple = ()) -> bytes:
         struct.pack("<II", 0x19, command_size) + b"__TEXT".ljust(16, b"\0")
         + struct.pack("<QQQQIIII", 0, offset + len(payload), 0, offset + len(payload), 7, 5, len(names), 0)
     )
-    header = struct.pack(
-        "<IiiIIIII", 0xFEEDFACF, 0x0100000C, 0, 6, 1 + len(dylibs), command_size + len(required), 0, 0)
-    return header + segment + entries + required + payload
+    header = struct.pack("<IiiIIIII", 0xFEEDFACF, 0x0100000C, 0, 6, 1, command_size, 0, 0)
+    return header + segment + entries + payload
 
 
 NEUTRAL_BUILDER = "kernarium@kernarium"
@@ -157,8 +128,6 @@ class Fixture:
         write(self.repo, "kernel/mainline-6.18/config/android.fragment", "# android\nCONFIG_BINDER=y\n# CONFIG_NFS_FS is not set\n")
         write(self.repo, "kernel/mainline-6.18/config/android-required-builtins.txt", "CONFIG_BINDER\n")
         write(self.repo, "kernel/mainline-6.18/config/android-forbidden-options.txt", "CONFIG_NFS_FS\n")
-        write(self.repo, "android/lineage-24/third_party/accessibility/metadata.env", f"TALKBACK_UPSTREAM_COMMIT='{'1' * 40}'\n")
-        write(self.repo, "dependencies/patches/talkback/series.tsv", f"# series\ntree\t{'4' * 40}\n")
         self.first = commit(self.repo, "base")
         self.trees = release_inputs.object_ids(self.repo, release_inputs.input_paths(self.repo / LIST))
         self.set_descriptors()
@@ -172,7 +141,6 @@ class Fixture:
         lines = [
             f"LINEAGE24_ACCEPTED_SCHEMA={schema}",
             f"LINEAGE24_ACCEPTED_RELEASE_ID='{release_id}'",
-            f"LINEAGE24_ACCEPTED_DIRECTORY_NAME='lineage24-mainline6.18-4k-{release_id}'",
         ]
         if schema >= 7:
             lines.append(f"LINEAGE24_ACCEPTED_INPUT_TREES='{release_inputs.render_trees(trees)}'")
@@ -183,50 +151,22 @@ class Fixture:
             f"UML_KERNEL_ARTIFACT_RELEASE='{KERNEL_RELEASE}'\n"
             f"UML_KERNEL_ARTIFACT_FINAL_TREE='{kernel_tree}'\n")
         commit(self.repo, "accept the artifacts")
-        self.install(release_id)
-
-    def install(self, release_id: str = RELEASE_ID, disk: bytes = DISK) -> Path:
-        """The accepted release as install-release.py leaves it below .build/android/releases."""
-        installed = self.repo / ".build/android/releases" / f"lineage24-mainline6.18-4k-{release_id}"
-        shutil.rmtree(installed, ignore_errors=True)
-        write(installed, "release-manifest.json", json.dumps(self.manifest(release_id)))
-        write(installed, "guest/partition-layout.json", json.dumps(self.layout(disk)))
-        return installed
-
-    @staticmethod
-    def layout(disk: bytes) -> dict:
-        import hashlib
-
-        return {
-            "schema_version": 2,
-            "system_disk": {
-                "size_bytes": len(disk), "sha256": hashlib.sha256(disk).hexdigest(),
-                "partitions": [{"name": "system", "sha256": AOT_SYSTEM_SHA256}],
-            },
-        }
 
     def manifest(self, release_id: str = RELEASE_ID, trees=None) -> dict:
         trees = self.trees if trees is None else trees
-        return {
-            "acceptance": "accepted", "release_id": release_id,
-            "outer": {"revision": "c" * 40, "dirty": False, "input_trees": trees},
-        }
+        return {"release_id": release_id, "outer": {"revision": "c" * 40, "dirty": False, "input_trees": trees}}
 
-    def proof_manifest(self, release_id: str = "unsigned-proof-ff1") -> dict:
-        """What Andarium/scripts/stage-system-image.py --unsigned-proof stages."""
-        return {
-            "acceptance": "unsigned-proof", "release_id": release_id,
-            "android": {"build_number": 29, "signed": False},
-            "outer": {"revision": "c" * 40, "dirty": False},
-        }
-
-    def stage(self, release_id: str = RELEASE_ID, trees=None, disk: bytes = DISK) -> Path:
+    def stage(self, release_id: str = RELEASE_ID, trees=None) -> Path:
         staged = self.repo / ".build/andarium-system"
         shutil.rmtree(staged, ignore_errors=True)
         (staged / "guest").mkdir(parents=True)
         (staged / "boot").mkdir()
+        disk = b"disk-bytes" * 100
         (staged / "guest/system.img").write_bytes(disk)
-        write(staged, "guest/partition-layout.json", json.dumps(self.layout(disk)))
+        import hashlib
+
+        write(staged, "guest/partition-layout.json", json.dumps(
+            {"schema_version": 2, "system_disk": {"size_bytes": len(disk), "sha256": hashlib.sha256(disk).hexdigest()}}))
         write(staged, "boot/kernel-command-line.txt", "init=/init\n")
         write(staged, "release-manifest.json", json.dumps(self.manifest(release_id, trees)))
         return staged
@@ -289,24 +229,6 @@ class CheckTests(unittest.TestCase):
             "overlay: change the product", "overlay: add more", "PENDING_INPUTS_DECISION=" + RELEASE_ID)
         self.assertNotIn("publish-release.py changed", result.stderr)
 
-    def test_a_source_the_image_builds_is_an_input_of_the_release(self) -> None:
-        # TalkBack and eSpeak NG are built by the image build, so their pins and
-        # series decide the release as any other input does.
-        for path, text, name in (
-            ("android/lineage-24/third_party/accessibility/metadata.env",
-             f"TALKBACK_UPSTREAM_COMMIT='{'9' * 40}'\n", "android/lineage-24/third_party"),
-            ("dependencies/patches/talkback/series.tsv",
-             f"# series\ntree\t{'6' * 40}\n", "dependencies/patches/talkback"),
-        ):
-            with self.subTest(path):
-                original = (self.repo / path).read_text()
-                write(self.repo, path, text)
-                commit(self.repo, f"change {path}")
-                self.fails(self.fixture.run(), RELEASE_ID, f"{name} changed")
-                write(self.repo, path, original)
-                commit(self.repo, f"restore {path}")
-                self.passes(self.fixture.run())
-
     def test_an_excluded_path_changes_nothing(self) -> None:
         write(self.repo, "android/lineage-24/README.md", "more docs\n")
         commit(self.repo, "docs")
@@ -330,152 +252,6 @@ class CheckTests(unittest.TestCase):
         self.fixture.stage()
         self.fixture.stage(trees={**self.fixture.trees, "android/lineage-24/overlay": "d" * 40})
         self.fails(self.fixture.run(app=False), "input trees that differ")
-
-    def test_a_staged_unsigned_proof_fails_by_name_and_no_decision_covers_it(self) -> None:
-        # The proof's own release ID, and the accepted one with the accepted
-        # input trees (a proof that took everything but its acceptance).
-        for release_id in ("unsigned-proof-ff1", RELEASE_ID):
-            with self.subTest(release_id):
-                staged = self.fixture.stage()
-                manifest = self.fixture.proof_manifest(release_id)
-                if release_id == RELEASE_ID:
-                    manifest["outer"]["input_trees"] = self.fixture.trees
-                (staged / "release-manifest.json").write_text(json.dumps(manifest))
-                for decision in (None, RELEASE_ID, f"{release_id},{KERNEL_ID}"):
-                    for app in (False, True):
-                        if app:
-                            self.fixture.app = self.fixture.package()
-                        result = self.fixture.run(app=app, decision=decision)
-                        self.fails(result, "the staged system", "an unsigned proof image",
-                                   "without --unsigned-proof")
-        # Staging the accepted release again passes.
-        self.fixture.stage()
-        self.fixture.app = self.fixture.package()
-        self.passes(self.fixture.run())
-
-    def test_a_packaged_unsigned_proof_fails_though_the_staged_system_is_accepted(self) -> None:
-        (self.fixture.app / "andarium-system/release-manifest.json").write_text(
-            json.dumps(self.fixture.proof_manifest()))
-        result = self.fixture.run(decision=RELEASE_ID)
-        self.fails(result, "the packaged system", "an unsigned proof image")
-        self.assertNotIn("the staged system", result.stderr)
-
-    def test_a_manifest_that_is_not_marked_accepted_fails(self) -> None:
-        for acceptance in ("candidate", None):
-            with self.subTest(acceptance):
-                manifest = self.fixture.manifest()
-                if acceptance is None:
-                    del manifest["acceptance"]
-                else:
-                    manifest["acceptance"] = acceptance
-                (self.repo / ".build/andarium-system/release-manifest.json").write_text(json.dumps(manifest))
-                self.fails(self.fixture.run(app=False, decision=RELEASE_ID),
-                           "not an accepted release", f"acceptance {acceptance!r}")
-
-    def test_an_accepted_manifest_over_another_disk_fails_staged_and_packaged(self) -> None:
-        # A mixed staging directory: the accepted release's manifest and input
-        # trees, another system disk (a proof's) and a layout that names it.
-        proof_disk = b"another system disk" * 100
-        self.fixture.stage(disk=proof_disk)
-        for app in (False, True):
-            if app:
-                self.fixture.app = self.fixture.package()
-            result = self.fixture.run(app=app, decision=RELEASE_ID)
-            self.fails(result, "the system disk of the staged system", "not the accepted release's")
-        # The staged system is the accepted one and the packaged one is not.
-        self.fixture.stage()
-        self.fixture.app = self.fixture.package()
-        (self.fixture.app / "andarium-system/guest/system.img").write_bytes(proof_disk)
-        (self.fixture.app / "andarium-system/guest/partition-layout.json").write_text(
-            json.dumps(self.fixture.layout(proof_disk)))
-        self.fails(self.fixture.run(decision=RELEASE_ID), "guest/partition-layout.json is not the staged one")
-        # Both, with a layout that agrees with its disk, as a repackaging would leave them.
-        self.fixture.stage(disk=proof_disk)
-        self.fixture.app = self.fixture.package()
-        self.fails(self.fixture.run(decision=RELEASE_ID), "the system disk of the staged system")
-        self.fixture.stage()
-        self.fixture.app = self.fixture.package()
-        self.passes(self.fixture.run())
-
-    def test_the_accepted_release_must_be_installed_to_tie_the_disk_to_it(self) -> None:
-        shutil.rmtree(self.repo / ".build/android/releases")
-        for app in (False, True):
-            result = self.fixture.run(app=app, decision=RELEASE_ID)
-            self.fails(result, "is not installed here", "install-release.py")
-        # What is installed under the accepted directory name must be the accepted release.
-        installed = self.fixture.install()
-        write(installed, "release-manifest.json", json.dumps(self.fixture.manifest("20260101-los24-r1")))
-        self.fails(self.fixture.run(app=False), "is not the accepted " + RELEASE_ID)
-        manifest = self.fixture.manifest()
-        manifest["acceptance"] = "unsigned-proof"
-        write(installed, "release-manifest.json", json.dumps(manifest))
-        self.fails(self.fixture.run(app=False), "not marked accepted")
-        self.fixture.install()
-        self.passes(self.fixture.run())
-
-    def test_an_installed_layout_without_a_usable_digest_is_an_error_not_a_skipped_check(self) -> None:
-        installed = self.fixture.install()
-        layout = installed / "guest/partition-layout.json"
-        digest = json.loads(layout.read_text())["system_disk"]["sha256"]
-        self.assertNotEqual(digest, digest.upper())
-        unusable = "names no usable system disk digest"
-        cases = {
-            "null": ({"system_disk": {"sha256": None}}, unusable),
-            "empty": ({"system_disk": {"sha256": ""}}, unusable),
-            "short": ({"system_disk": {"sha256": digest[:63]}}, unusable),
-            "long": ({"system_disk": {"sha256": digest + "0"}}, unusable),
-            "uppercase": ({"system_disk": {"sha256": digest.upper()}}, unusable),
-            "not hexadecimal": ({"system_disk": {"sha256": "g" * 64}}, unusable),
-            "number": ({"system_disk": {"sha256": 12}}, unusable),
-            "list": ({"system_disk": {"sha256": [digest]}}, unusable),
-            "no digest": ({"system_disk": {}}, "is not installed here"),
-            "no system disk": ({"schema_version": 2}, "is not installed here"),
-            "system disk null": ({"system_disk": None}, "is not installed here"),
-        }
-        for label, (content, needle) in cases.items():
-            layout.write_text(json.dumps(content))
-            for app in (False, True):
-                with self.subTest(label, app=app):
-                    self.fails(self.fixture.run(app=app, decision=RELEASE_ID), needle)
-        # A usable digest checks again, whatever the staged disk says.
-        self.fixture.install()
-        self.passes(self.fixture.run())
-
-    def test_a_descriptor_without_a_directory_name_fails(self) -> None:
-        text = (self.repo / DESCRIPTOR).read_text()
-        write(self.repo, DESCRIPTOR, "".join(line for line in text.splitlines(True) if "DIRECTORY_NAME" not in line))
-        commit(self.repo, "drop the directory name")
-        self.fails(self.fixture.run(app=False), "names no release directory")
-
-    def test_a_repeated_json_key_in_a_manifest_or_a_layout_is_refused(self) -> None:
-        staged = self.repo / ".build/andarium-system"
-        manifest = (staged / "release-manifest.json").read_text()
-        layout = (staged / "guest/partition-layout.json").read_text()
-        installed = self.repo / ".build/android/releases" / f"lineage24-mainline6.18-4k-{RELEASE_ID}"
-        cases = (
-            (staged / "release-manifest.json", manifest, manifest[:-1] + ', "acceptance": "unsigned-proof"}',
-             "repeats the key acceptance"),
-            (staged / "guest/partition-layout.json", layout, layout[:-1] + ', "schema_version": 1}',
-             "repeats the key schema_version"),
-            (installed / "release-manifest.json", manifest, manifest[:-1] + ', "release_id": "x"}',
-             "repeats the key release_id"),
-        )
-        for path, original, doubled, message in cases:
-            with self.subTest(path.name):
-                path.write_text(doubled)
-                result = self.fixture.run(app=False, decision=RELEASE_ID)
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertIn(message, result.stderr)
-                path.write_text(original)
-        # The packaged copies too, which must also equal the staged ones.
-        self.fixture.app = self.fixture.package()
-        packaged = self.fixture.app / "andarium-system/guest/partition-layout.json"
-        (staged / "guest/partition-layout.json").write_text(layout[:-1] + ', "schema_version": 2}')
-        packaged.write_text(layout[:-1] + ', "schema_version": 2}')
-        self.fails(self.fixture.run(decision=RELEASE_ID), "repeats the key schema_version")
-        (staged / "guest/partition-layout.json").write_text(layout)
-        packaged.write_text(layout)
-        self.passes(self.fixture.run())
 
     def test_a_missing_staged_system_fails(self) -> None:
         shutil.rmtree(self.repo / ".build/andarium-system")
@@ -639,263 +415,6 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
 
 
-AOT_DESCRIPTOR = release_artifact.ACCEPTED_DESCRIPTOR
-AOT_DIRECTORY = f"lineage24-mainline6.18-4k-{RELEASE_ID}"
-AOT_FRAMEWORK = "UmlArm64Aot"
-
-
-def aot_blob(
-    manifest_sha256: str, release_id: str = RELEASE_ID, filler: int = 1,
-    system_sha256: str = AOT_SYSTEM_SHA256,
-) -> bytes:
-    """A blob with the header rewrite.py gives one, and bytes after it."""
-    blob = bytearray(16384)
-    struct.pack_into("<8sI", blob, 0, release_artifact.BLOB_MAGIC, 3)
-    blob[release_artifact.BLOB_RELEASE_ID_OFFSET:
-         release_artifact.BLOB_RELEASE_ID_OFFSET + len(release_id)] = release_id.encode()
-    blob[release_artifact.BLOB_MANIFEST_SHA256_OFFSET:
-         release_artifact.BLOB_MANIFEST_SHA256_OFFSET + 32] = bytes.fromhex(manifest_sha256)
-    blob[release_artifact.BLOB_SYSTEM_SHA256_OFFSET:
-         release_artifact.BLOB_SYSTEM_SHA256_OFFSET + 32] = bytes.fromhex(system_sha256)
-    blob[8192:] = bytes([filler]) * (len(blob) - 8192)
-    return bytes(blob)
-
-
-class AotTests(unittest.TestCase):
-    """--aot: the framework an archive packages is the accepted artifact, and only when the switch says so."""
-
-    def setUp(self) -> None:
-        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        self.fixture = Fixture(self.root)
-        self.repo = self.fixture.repo
-        for index, relative in enumerate(release_artifact.GENERATOR_INPUTS):
-            write(self.repo, relative, f"generator input {index}\n")
-        write(self.repo, "tools/aot/rewrite.py", "BLOB_VERSION = 3\n")
-        write(self.repo, "tools/aot/libraries.txt",
-              "library /system/lib64/libz.so\nboot /system/framework/arm64/boot*.oat\n")
-        commit(self.repo, "the AOT tools")
-        # What the runtime reads from the packaged system, as the blob of the release binds it.
-        self.identity = release_artifact.release_identity(self.fixture.app / "andarium-system")
-        self.bound = {key: self.identity[key] for key in release_artifact.RELEASE_KEYS}
-        self.blob = aot_blob(self.identity["release_manifest_sha256"])
-
-    def accept(self, archives: str = "no", release_id: str = RELEASE_ID, install: bool = True) -> dict:
-        """An artifact of the fixture's tools, installed beside the release, and the descriptor that accepts it."""
-        directory = self.repo / ".build/android/aot" / AOT_DIRECTORY
-        shutil.rmtree(directory, ignore_errors=True)
-        directory.mkdir(parents=True)
-        (directory / "blob.bin").write_bytes(self.blob)
-        write(directory, "manifest.json", json.dumps({"release_id": RELEASE_ID, "blob_bytes": len(self.blob)}))
-        write(directory, "licences.json", json.dumps({"release_id": RELEASE_ID, "libraries": {}}))
-        libraries, boot = release_artifact.library_list(self.repo)
-        description = release_artifact.write_description(directory, self.bound, libraries, boot, self.repo)
-        text = release_artifact.render_accepted(
-            description, release_artifact.sha256_file(directory / "artifact.json"), archives)
-        write(self.repo, AOT_DESCRIPTOR, text.replace(f"'{RELEASE_ID}'", f"'{release_id}'"))
-        commit(self.repo, "accept the AOT artifact")
-        if not install:
-            shutil.rmtree(directory)
-        return description
-
-    def package_aot(self, blob: bytes | None = None) -> None:
-        framework = self.fixture.app / "Frameworks" / f"{AOT_FRAMEWORK}.framework"
-        framework.mkdir(parents=True, exist_ok=True)
-        (framework / AOT_FRAMEWORK).write_bytes(macho({"__text": self.blob if blob is None else blob}))
-
-    def link_runtime(self, command: int = LC_LOAD_DYLIB, name: str = "@rpath/UmlArm64Aot.framework/UmlArm64Aot") -> None:
-        """The packaged Android runtime with a load command that names the AOT framework."""
-        runtime = self.fixture.app / "Frameworks" / f"{FRAMEWORK}.framework" / FRAMEWORK
-        runtime.write_bytes(macho({"__uml_elf": kernel_image()}, ((command, name),)))
-
-    def run_check(self, *arguments: str, decision: str | None = None):
-        return self.fixture.run("--aot", *arguments, decision=decision)
-
-    def passes(self, result) -> None:
-        self.assertEqual(result.returncode, 0, result.stderr)
-
-    def fails(self, result, *needles: str) -> None:
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        for needle in needles:
-            self.assertIn(needle, result.stderr)
-
-    def test_no_accepted_artifact_and_no_framework_passes(self) -> None:
-        result = self.run_check()
-        self.passes(result)
-        self.assertIn("no AOT artifact is accepted, and the application carries none", result.stdout)
-
-    def test_a_framework_without_an_accepted_artifact_fails(self) -> None:
-        self.package_aot()
-        self.fails(self.run_check(), "no AOT artifact is accepted")
-
-    def test_a_framework_in_an_archive_while_the_switch_is_no_fails(self) -> None:
-        self.accept("no")
-        self.package_aot()
-        self.fails(self.run_check(), "which no archive may yet", "ARCHIVES to no")
-        # The same descriptor passes a build that packages no application.
-        self.passes(self.fixture.run("--aot", app=False))
-
-    def test_no_framework_while_the_switch_is_no_passes(self) -> None:
-        self.accept("no")
-        self.passes(self.run_check())
-
-    def test_the_accepted_blob_in_an_archive_passes_when_the_switch_is_yes(self) -> None:
-        self.accept("yes")
-        self.package_aot()
-        result = self.run_check()
-        self.passes(result)
-        self.assertIn("is the blob of the AOT artifact of", result.stdout)
-        self.assertIn("generator inputs are the ones on this commit", result.stdout)
-
-    def test_a_runtime_that_links_the_framework_fails_an_application_without_it(self) -> None:
-        # With no accepted artifact, with the switch at no and with it at yes:
-        # dyld refuses the launch whatever the descriptor says.
-        self.link_runtime()
-        self.fails(self.run_check(), f"the packaged runtime {FRAMEWORK} links UmlArm64Aot.framework",
-                   "dyld refuses to launch")
-        self.accept("no")
-        self.fails(self.run_check(), f"the packaged runtime {FRAMEWORK} links UmlArm64Aot.framework")
-        self.accept("yes")
-        self.fails(self.run_check(), f"the packaged runtime {FRAMEWORK} links UmlArm64Aot.framework",
-                   "carries no AOT framework")
-        # The framework present is the passing direction.
-        self.package_aot()
-        self.passes(self.run_check())
-
-    def test_a_runtime_that_is_cut_short_ends_in_the_checks_own_error(self) -> None:
-        def thin(commands: bytes, count: int) -> bytes:
-            header = struct.pack("<IiiIIIII", 0xFEEDFACF, 0x0100000C, 0, 6, count, len(commands), 0, 0)
-            return header + commands
-
-        runtime = self.fixture.app / "Frameworks" / f"{FRAMEWORK}.framework" / FRAMEWORK
-        for name, content in (
-            ("a fat header with no entries", struct.pack(">II", 0xCAFEBABE, 3)),
-            ("a header that counts commands there are none of", thin(b"", 2)),
-            ("a command shorter than its header", thin(struct.pack("<II", LC_LOAD_DYLIB, 4), 1)),
-            ("a dylib command with no name", thin(struct.pack("<II", LC_LOAD_DYLIB, 8), 1)),
-            ("a command that runs past the end", thin(struct.pack("<II", LC_LOAD_DYLIB, 4096) + b"\0" * 8, 1)),
-            ("a dylib name outside its command",
-             thin(struct.pack("<IIIIII", LC_LOAD_DYLIB, 24, 4096, 2, 0x10000, 0x10000), 1)),
-        ):
-            with self.subTest(name):
-                runtime.write_bytes(content)
-                result = self.run_check()
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertNotIn("Traceback", result.stderr)
-                self.assertIn(f"the packaged framework {FRAMEWORK} cannot be read as a Mach-O file", result.stderr)
-        # A file that is not a Mach-O at all names nothing: nothing to refuse.
-        runtime.write_bytes(macho({"__uml_elf": kernel_image()}))
-        other = self.fixture.app / "Frameworks/Other.framework"
-        other.mkdir(parents=True)
-        (other / "Other").write_bytes(b"text, not code\n")
-        self.passes(self.run_check())
-
-    def test_a_runtime_that_links_another_framework_or_weakly_needs_nothing(self) -> None:
-        self.accept("no")
-        self.link_runtime(name="@rpath/Other.framework/Other")
-        self.passes(self.run_check())
-        self.link_runtime(LC_LOAD_WEAK_DYLIB)
-        self.passes(self.run_check())
-        # A build that packages no application has no runtime to read.
-        self.link_runtime()
-        self.passes(self.fixture.run("--aot", app=False))
-
-    def test_an_archive_without_the_framework_fails_when_the_switch_is_yes(self) -> None:
-        self.accept("yes")
-        self.fails(self.run_check(), "carries no AOT framework")
-
-    def test_another_blob_fails_and_no_decision_covers_it(self) -> None:
-        self.accept("yes")
-        self.package_aot(aot_blob(self.identity["release_manifest_sha256"], filler=2))
-        self.fails(self.run_check(decision=f"aot-{RELEASE_ID}"), "is not the blob of the AOT artifact")
-
-    def test_a_blob_made_from_another_system_than_the_packaged_one_fails(self) -> None:
-        # The descriptor names this blob, but the packaged system is not the
-        # release it was made from: the runtime would run without it.
-        # (The release ID is the descriptor's: another one fails before this.)
-        for field, other in (("manifest", {"manifest_sha256": "cc" * 32}),
-                             ("system partition", {"system_sha256": "dd" * 32})):
-            with self.subTest(field=field):
-                arguments = {"manifest_sha256": self.identity["release_manifest_sha256"], **other}
-                self.blob = aot_blob(**arguments)
-                # The artifact binds the same release as its blob: only the packaged system differs.
-                self.bound = {"release_id": RELEASE_ID,
-                              "release_manifest_sha256": arguments["manifest_sha256"],
-                              "system_partition_sha256": arguments.get("system_sha256", AOT_SYSTEM_SHA256)}
-                self.accept("yes")
-                self.package_aot()
-                self.fails(self.run_check(), "was not made from the packaged system",
-                           "run without it")
-        # The same blob with the packaged system's own values passes, and says so.
-        self.blob = aot_blob(self.identity["release_manifest_sha256"])
-        self.bound = {key: self.identity[key] for key in release_artifact.RELEASE_KEYS}
-        self.accept("yes")
-        self.package_aot()
-        result = self.run_check()
-        self.passes(result)
-        self.assertIn("the packaged AOT blob is made from the packaged system", result.stdout)
-
-    def test_a_packaged_system_that_states_no_release_cannot_be_compared(self) -> None:
-        self.accept("yes")
-        self.package_aot()
-        (self.fixture.app / "andarium-system/guest/partition-layout.json").write_text("{}", encoding="utf-8")
-        self.fails(self.run_check(), "cannot be compared with the packaged system")
-
-    def test_a_framework_without_a_text_section_fails(self) -> None:
-        self.accept("yes")
-        self.package_aot()
-        framework = self.fixture.app / "Frameworks" / f"{AOT_FRAMEWORK}.framework" / AOT_FRAMEWORK
-        framework.write_bytes(macho({"__data": b"x" * 64}))
-        self.fails(self.run_check(), "has no __text section")
-
-    def test_a_descriptor_for_another_release_fails(self) -> None:
-        self.accept("yes", release_id="20261201-los24-r98")
-        self.package_aot()
-        self.fails(self.run_check(), "is not for the accepted Android release")
-
-    def test_a_changed_generator_input_is_pending_until_the_user_decides(self) -> None:
-        self.accept("yes")
-        self.package_aot()
-        write(self.repo, "tools/aot/asm.py", "changed\n")
-        commit(self.repo, "aot: change the assembler")
-        result = self.run_check()
-        self.fails(result, "is behind this commit", "tools/aot/asm.py", "aot: change the assembler",
-                   f"PENDING_INPUTS_DECISION=aot-{RELEASE_ID}")
-        decided = self.run_check(decision=f"aot-{RELEASE_ID}")
-        self.passes(decided)
-        self.assertIn("the archive will not carry it", decided.stderr)
-
-    def test_a_decision_for_another_artifact_covers_nothing(self) -> None:
-        self.accept("yes")
-        self.package_aot()
-        write(self.repo, "tools/aot/asm.py", "changed\n")
-        commit(self.repo, "aot: change the assembler")
-        self.fails(self.run_check(decision=RELEASE_ID), "is behind this commit")
-
-    def test_an_artifact_that_is_not_installed_is_pending_when_it_is_packaged(self) -> None:
-        self.accept("yes", install=False)
-        self.package_aot()
-        self.fails(self.run_check(), "is not installed", ".build/android/aot/")
-
-    def test_an_installed_artifact_that_is_not_the_accepted_one_fails(self) -> None:
-        self.accept("yes")
-        directory = self.repo / ".build/android/aot" / AOT_DIRECTORY
-        (directory / "blob.bin").write_bytes(aot_blob(self.identity["release_manifest_sha256"], filler=3))
-        self.package_aot()
-        self.fails(self.run_check(), "the installed AOT artifact is not the accepted one")
-
-    def test_a_dirty_generator_input_fails(self) -> None:
-        self.accept("yes")
-        self.package_aot()
-        write(self.repo, "tools/aot/asm.py", "uncommitted\n")
-        self.fails(self.run_check(), "uncommitted changes", "tools/aot/asm.py")
-
-    def test_naming_only_aot_is_enough(self) -> None:
-        result = subprocess.run(
-            [sys.executable, "-B", str(SCRIPT), "--repository", str(self.repo), "--aot"],
-            check=False, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
-        self.passes(result)
-
-
 class ConfigParityTests(unittest.TestCase):
     """The symbol check agrees with the kernel build's own (config-fragments.sh)."""
 
@@ -931,121 +450,6 @@ class ConfigParityTests(unittest.TestCase):
                     capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
                 problems = checker.config_mismatches(root, {"fragments": names}, config)
                 self.assertEqual(shell.returncode == 0, not problems, (shell.stderr, problems))
-
-
-PROJECT = REPOSITORY / "Andarium/Andarium.xcodeproj/project.xcproj"
-
-
-def build_phase(name: str) -> dict:
-    """The named script phase of the Andarium project (the format is JSON with trailing commas)."""
-    project = json.loads(re.sub(r",(\s*[}\]])", r"\1", PROJECT.read_text(encoding="utf-8")))
-    found = []
-
-    def walk(value) -> None:
-        if isinstance(value, dict):
-            if value.get("kind") == "script" and value.get("name") == name:
-                found.append(value)
-            for item in value.values():
-                walk(item)
-        elif isinstance(value, list):
-            for item in value:
-                walk(item)
-
-    walk(project)
-    if len(found) != 1:
-        raise AssertionError(f"expected one build phase named {name}, found {len(found)}")
-    return found[0]
-
-
-class BuildPhaseTests(unittest.TestCase):
-    """The AppStore and TestFlight configurations run the check; the others do not."""
-
-    CONFIGURATIONS = ("Debug", "Release", "AppStore", "TestFlight")
-
-    def setUp(self) -> None:
-        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        script = build_phase("Check embedded artifacts")["script"]
-        self.script = script if isinstance(script, str) else "\n".join(script)
-
-    def run_phase(self, configuration: str, fixture: Fixture):
-        # The phase's own text, with the checker named by path and the
-        # repository the fixture's, as an archive's work tree is.
-        command = self.script.replace(
-            '"$SRCROOT/../scripts/check-embedded-artifacts.py"',
-            f'"{SCRIPT}" --repository "{fixture.repo}"')
-        self.assertIn(str(SCRIPT), command)
-        environment = {
-            "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "CONFIGURATION": configuration,
-            "SRCROOT": str(REPOSITORY / "Andarium"), "TARGET_BUILD_DIR": str(fixture.app.parent),
-            "WRAPPER_NAME": fixture.app.name,
-        }
-        return subprocess.run(
-            ["/bin/sh", "-c", command], env=environment, check=False, stdin=subprocess.DEVNULL,
-            capture_output=True, text=True, timeout=120)
-
-    def test_the_phase_checks_the_app_for_the_accepted_release_and_kernel(self) -> None:
-        self.assertIn("--app", self.script)
-        self.assertIn("--android-release", self.script)
-        self.assertIn("--kernel android", self.script)
-        self.assertIn("--aot", self.script)
-        # And that the application carries no AOT diagnostics build.
-        self.assertIn("check-no-aot-diagnostics.py", self.script)
-
-    def test_a_staged_unsigned_proof_stops_an_appstore_and_a_testflight_build_only(self) -> None:
-        fixture = Fixture(self.root)
-        staged = fixture.stage()
-        (staged / "release-manifest.json").write_text(json.dumps(fixture.proof_manifest()))
-        fixture.app = fixture.package()
-        self.assert_only_release_builds_refuse(fixture)
-
-    def test_a_proof_the_staging_script_stages_stops_the_same_builds(self) -> None:
-        # The staging script's own output, not a manifest written to look like it.
-        import test_stage_system_image as staging
-
-        fixture = Fixture(self.root)
-        shutil.rmtree(fixture.repo / ".build/andarium-system")
-        proof = staging.make_proof(self.root / "proofs")
-        checkout = staging.make_checkout(self.root / "checkout")
-        result = staging.run_script(
-            checkout.script, "--release", str(proof), "--unsigned-proof",
-            "--output", str(fixture.repo / ".build/andarium-system"))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        fixture.app = fixture.package()
-        self.assert_only_release_builds_refuse(fixture)
-
-    def assert_only_release_builds_refuse(self, fixture: Fixture) -> None:
-        for configuration in self.CONFIGURATIONS:
-            with self.subTest(configuration):
-                result = self.run_phase(configuration, fixture)
-                if configuration in ("AppStore", "TestFlight"):
-                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-                    self.assertIn("an unsigned proof image", result.stderr)
-                else:
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual(result.stderr, "")
-
-    def test_an_aot_framework_stops_an_appstore_and_a_testflight_build_only(self) -> None:
-        # No AOT artifact is accepted, so no archive may carry the component;
-        # a development build is not checked.
-        fixture = Fixture(self.root)
-        framework = fixture.app / "Frameworks" / f"{AOT_FRAMEWORK}.framework"
-        framework.mkdir(parents=True)
-        (framework / AOT_FRAMEWORK).write_bytes(macho({"__text": b"x" * 64}))
-        for configuration in self.CONFIGURATIONS:
-            with self.subTest(configuration):
-                result = self.run_phase(configuration, fixture)
-                if configuration in ("AppStore", "TestFlight"):
-                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-                    self.assertIn("no AOT artifact is accepted", result.stderr)
-                else:
-                    self.assertEqual(result.returncode, 0, result.stderr)
-
-    def test_the_accepted_release_passes_the_phase_in_every_configuration(self) -> None:
-        fixture = Fixture(self.root)
-        for configuration in self.CONFIGURATIONS:
-            with self.subTest(configuration):
-                result = self.run_phase(configuration, fixture)
-                self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

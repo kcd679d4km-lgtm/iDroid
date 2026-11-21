@@ -297,22 +297,6 @@ struct GuestHardwareInputTests {
         return view
     }
 
-    @Test func activatingTheDisplaysElementSendsTheGuestNoTouch() {
-        // VoiceOver's double-tap on an element that does not take the
-        // activation taps its activation point, which `touchesBegan` forwards.
-        let view = squareDisplayView()
-        var contacts = 0
-        view.contactDidChange = { _, _ in contacts += 1 }
-        view.applyAccessibility(GuestDisplayAccessibility(label: "Android screen", value: "off"))
-        #expect(view.isAccessibilityElement)
-        #expect(view.accessibilityValue == "off")
-        #expect(view.accessibilityActivate())
-        #expect(contacts == 0)
-        // Where the display is no element the view keeps UIKit's behaviour.
-        view.applyAccessibility(nil)
-        #expect(!view.accessibilityActivate())
-    }
-
     @Test func aTouchOfThePointerIsTheMousesOrAFingersFromItsBeginningToItsEnd() throws {
         let sink = RecordingSink()
         let input = makeInput(sink, routed: false)

@@ -195,19 +195,6 @@ it. The bridge fields used below are defined by the comments in
   present, name consecutive frames from a 16 KiB-aligned offset of one backing,
   and agree in protection; any other slot is a host-private copy coherent with
   the frames only at a synchronization point (`guest-tlb-replay-runs`).
-- A fork invalidates on the host only the parent's writable private VMAs, the
-  entries it write-protects; every other VMA of the parent keeps its host
-  mappings and code stamps, and any other flush of an `mm` covers all of it
-  (`guest-fork-flush-*`, `guest-mmu-stress`). That rests on `dup_mmap()`
-  flushing the parent after `arch_dup_mmap()` on every path that changed one
-  of its entries; a kernel uprev rechecks it.
-- A user PTE the kernel sends as guest code carries the immutable fact, bit 1
-  of `guest_code` (bridge ABI 29), when it names an up-to-date page-cache page
-  of a file on EROFS, decided from the PTE under its page-table lock. Kernel
-  mappings, anonymous pages (a copy-on-write page of a private file mapping),
-  other file systems and DAX never carry it, and the host runs rewritten
-  code, and shares a verification between address spaces, for no other page.
-  The AOT share rows (`aot-guest-workloads`) check it.
 - Because of that slot rule, a kernel alias outside the linear map shares
   memory with the frames' other views only in whole aligned groups of four
   pages, so the architecture reports a vmap group of four. vmalloc and `vmap()`
@@ -249,9 +236,8 @@ it. The bridge fields used below are defined by the comments in
   generic `arch/um` per-task ABI hooks and the arm64 port's `arch/arm64/um`
   support. The kuser helpers and signal-return pages are ordinary code pages the
   kernel installs, and `cacheflush()` reaches the engines through
-  `darwin_uml_vm_invalidate_code()`, which the x86_64 kernel does not import.
-  Mainline and Android build it; the x86_64 slice turns `UML_ARM64_AARCH32`
-  off.
+  `darwin_uml_vm_invalidate_code()`. Mainline and Android build it; the x86_64
+  slice turns `UML_ARM64_AARCH32` off.
 - Bridge ABI 22 carries the AArch32 task (see the comments on
   `struct darwin_uml_guest_registers`). `abi.cp15_barrier` (0 to 2, default 1)
   is passed as `DARWIN_UML_DISPATCH_A32_CP15BEN`. The engines raise the
@@ -324,15 +310,6 @@ it. The bridge fields used below are defined by the comments in
   writeback under pressure (`guest-ubd-request-memory`). The project adds no
   behavior to upstream UML's COW implementation, and Apple launchers never
   construct a COW image pair.
-- A UBD read ends each page it filled with `flush_dcache_page()`. On x86-64 a
-  page some process runs, pinned before the read (`O_DIRECT`, an io_uring fixed
-  buffer), is named to the host so that its translation is not stale; an arm64
-  program maintains its own caches (`run_guest_x86_64_pinned_code_write.py`).
-- A copy into a buffer-vector destination (a loop device's or an io_uring
-  fixed buffer's read of a file, an nbd or sunrpc receive) ends each page it
-  wrote with `flush_dcache_page()` in `iterate_bvec()`, so a page some process
-  runs is named to the host as a UBD read names it, and an arm64 kernel's call is
-  empty (`fixed-file` and `loop-fixed` of the same runner).
 - While the guest runs, a full host volume holds a direct UBD disk's I/O and
   the file system does not see a failure. A write, a flush or a write of zeroes
   that the host refuses with `ENOSPC` is redone, after a back-off that doubles
@@ -495,9 +472,6 @@ it. The bridge fields used below are defined by the comments in
   (`darwin_net_kern.guest_wake=0` turns this off). A suspend the host asked for
   ends only with the host's wake; a host that forwards a key also sends the
   wake, because Virtio input is not a wake source.
-- The virtual Wi-Fi station stays joined through every suspend: virt_wifi
-  offers wake-on-WLAN for any activity, so cfg80211 does not disconnect the
-  station as the guest sleeps.
 - A wake request that arrives while a suspend is being entered is answered at
   once and still ends that suspend. It ends every host-asked suspend that
   arrived before it, too, including one that waits behind another console

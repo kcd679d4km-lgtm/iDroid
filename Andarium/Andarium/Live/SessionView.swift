@@ -13,8 +13,6 @@ struct SessionView: View {
     var body: some View {
         @Bindable var model = model
         content
-            // The text message bar, over Android and above the keyboard.
-            .overlay(alignment: .bottom) { TextMessageBarOverlay() }
             .statusBarHidden(true)
             // The system honours the bottom edge's deferral only while the
             // home indicator is visible: with it hidden, one swipe goes Home.

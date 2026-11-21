@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #pragma once
 
-#include "cpu/aot_selection.hpp"
 #include "cpu/engine.hpp"
 #include "cpu/jit_memory_status.hpp"
 
@@ -29,17 +28,6 @@ namespace uml::cpu {
  */
 [[nodiscard]] bool set_translation_cache_budget(std::size_t total_bytes,
 	unsigned executors, std::size_t per_executor_bytes) noexcept;
-
-/* A launch's word on ahead-of-time code (cpu/arm64/aot) and the release it
- * boots (null when the guest is not an Android release): false when it cannot
- * be kept, which is `on` for a build or a framework without the component,
- * for a release the framework was not made from (or none), or in a process
- * that already runs without it. Before each run's first executor;
- * `automatic` is on for the release the framework was made from unless the
- * environment says DARWIN_UML_AOT=0, and off for any other. A later run of
- * the process that the framework no longer fits is off, never a failure. */
-[[nodiscard]] bool select_aot(AotSelection selection,
-	const AotRelease *release) noexcept;
 
 /* Serializes JIT-capable emulator runs before any guest vCPU can allocate an
  * executor slot. Other engine kinds do not take this process-wide session.

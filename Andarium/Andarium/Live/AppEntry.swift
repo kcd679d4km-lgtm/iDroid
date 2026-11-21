@@ -72,11 +72,7 @@ struct AppEntry {
     @MainActor
     /// `freeSpace` is the space a run watches: the application's own reading
     /// (`freeStorageBytes`) unless a test supplies another.
-    /// `environment` is the launch's unless a test supplies another.
-    func makeModel(
-        freeSpace: @escaping @Sendable () -> UInt64 = { AppEntry.freeStorageBytes() },
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> AppModel {
+    func makeModel(freeSpace: @escaping @Sendable () -> UInt64 = { AppEntry.freeStorageBytes() }) -> AppModel {
         let launch = overrides
         let bundle = Bundle.main
         let version = Self.appVersion(bundle)
@@ -85,8 +81,8 @@ struct AppEntry {
         #if !APP_STORE
         // A UI test of the hardware keyboard and mouse opens the session with
         // no guest behind it.
-        if InputProbeLaunch.requested(in: environment) {
-            return Self.makeInputProbeModel(host: host, version: version, environment: environment)
+        if InputProbeLaunch.requested(in: ProcessInfo.processInfo.environment) {
+            return Self.makeInputProbeModel(host: host, version: version)
         }
         #endif
 
@@ -109,12 +105,6 @@ struct AppEntry {
         }
 
         let locations = GuestLocations(directory: Self.guestDirectory(instance: launch.instance))
-        #if !APP_STORE
-        // An isolated test guest keeps its own list of Android's apps, beside its disks.
-        if launch.instance != nil {
-            AndroidAppsHub.shared.configure(directory: locations.directory.appendingPathComponent("AndroidApps", isDirectory: true))
-        }
-        #endif
         let storage = TwoDiskStorage(
             locations: locations,
             release: carried?.identity ?? ReleaseIdentity(
@@ -146,7 +136,7 @@ struct AppEntry {
         }
 
         let model = AppModel(
-            guest: guest, host: host, system: system, capabilities: Self.deviceCapabilities(),
+            guest: guest, host: host, system: system, capabilities: .device,
             createRequirementBytes: storage.createRequirementBytes
         )
         // An iPhone's guest follows the device's orientation; a harness launch
@@ -179,19 +169,6 @@ struct AppEntry {
         let pointer = PointerPreference().launch(automated: !launch.isEmpty)
         model.pointerAsTouch = pointer.isOn
         model.pointerAsTouchDecidedByLaunch = !pointer.keepsChanges
-        // Settings' "When hot" is the person's last choice, unless the launch
-        // is a harness's and decides for its run alone (`HeatLimitPreference`);
-        // an App Store build has no launch environment and so keeps the
-        // person's own.
-        #if APP_STORE
-        let heat = HeatLimitPreference().launch(automated: false)
-        #else
-        let heat = HeatLimitPreference().launch(
-            automated: !launch.isEmpty || ThermalOverride.stated(in: environment) != nil,
-            stated: HeatLimitLaunch.stated(in: environment))
-        #endif
-        model.heatLimitOn = heat.isOn
-        model.heatLimitDecidedByLaunch = !heat.keepsChanges
         #if !APP_STORE
         model.printsStatistics = launch.statistics == true
         // The JIT row follows the person's last choice, unless the launch is a
@@ -201,9 +178,6 @@ struct AppEntry {
             hasOtherSettings: !launch.isEmpty)
         model.jitOn = jit.isOn
         model.jitDecidedByLaunch = !jit.keepsChanges
-        // A harness launch can keep the device's haptics silent for its run
-        // (`HapticsLaunch`); the person's switch stays as stored.
-        model.hapticsSilencedByLaunch = HapticsLaunch.silences(in: environment)
         #endif
 
         #if APP_STORE
@@ -288,9 +262,7 @@ struct AppEntry {
     /// instead of the runtime, and nothing is read from or written to the
     /// application's own guest or settings.
     @MainActor
-    private static func makeInputProbeModel(
-        host: HostDevice, version: String, environment: [String: String]
-    ) -> AppModel {
+    private static func makeInputProbeModel(host: HostDevice, version: String) -> AppModel {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("InputProbe", isDirectory: true)
         let locations = GuestLocations(directory: directory)
         let storage = TwoDiskStorage(
@@ -305,43 +277,24 @@ struct AppEntry {
         let system = SystemInfo(
             version: "", release: "probe", securityPatch: nil, kernel: "", architecture: "", appVersion: version)
         let model = AppModel(
-            guest: Guest.fresh(on: host), host: host, system: system, capabilities: Self.deviceCapabilities(),
+            guest: Guest.fresh(on: host), host: host, system: system, capabilities: .device,
             createRequirementBytes: 0
         )
         // The launch decides the setting for its own run.
         model.pointerAsTouch = PointerPreference().launch(automated: true).isOn
         model.pointerAsTouchDecidedByLaunch = true
-        let heat = HeatLimitPreference().launch(automated: true, stated: HeatLimitLaunch.stated(in: environment))
-        model.heatLimitOn = heat.isOn
-        model.heatLimitDecidedByLaunch = true
-        // The side keys play their feedback here too: a launch that keeps the
-        // phone silent does so on this path as on the ordinary one.
-        model.hapticsSilencedByLaunch = HapticsLaunch.silences(in: environment)
         let probe = InputProbe()
         model.inputProbe = probe
-        // A probe that states iOS's thermal state runs the thermal session
-        // against a stand-in for the guest's HAL, which says what Android
-        // would be told in the probe's log.
-        let thermalStated = ThermalOverride.stated(in: environment) != nil
-        let hal = thermalStated
-            ? ThermalProbeHal { [weak probe] severity in
-                DispatchQueue.main.async { MainActor.assumeIsolated { probe?.record("heat told \(severity)") } }
-            } : nil
         let runtime = LiveRuntime(
             model: model, storage: storage, marker: PauseMarker(url: directory.appendingPathComponent("pause.json")),
             keyboardMouse: KeyboardMouse.probe(
                 probe, supportsMouse: host.supportsPointer,
-                guestRegisters: InputProbeLaunch.guestRegisters(in: environment)
-            ) { [weak model] wanted in model?.pointerLockWanted = wanted },
-            thermalOpener: hal)
+                guestRegisters: InputProbeLaunch.guestRegisters(in: ProcessInfo.processInfo.environment)
+            ) { [weak model] wanted in model?.pointerLockWanted = wanted })
         model.driver = runtime
         model.phase = .running(.normal)
         runtime.beginInputProbe()
-        if thermalStated { runtime.beginThermalProbe() }
-        #if FEEDBACK_MAIL
-        if FeedbackProbe.requested(in: environment) { FeedbackProbe.install(on: model) }
-        #endif
-        if let script = OldAppsProbeLaunch.script(in: environment) {
+        if let script = OldAppsProbeLaunch.script(in: ProcessInfo.processInfo.environment) {
             let scripted = ScriptedOldApps(open: ["com.example.rally"])
             switch script {
             case .apps: break
@@ -351,11 +304,6 @@ struct AppEntry {
             model.scriptedOldApps = scripted
             // What the first listing of a run does once Android's storage is up.
             Task { await model.refreshOldApps() }
-        }
-        if AndroidAppsProbeLaunch.requested(in: environment) {
-            model.scriptedAndroidApps = ScriptedAndroidApps()
-            // What the first listing of a run does once Android's storage is up.
-            Task { await model.refreshAndroidApps() }
         }
         return model
     }
@@ -405,18 +353,6 @@ struct AppEntry {
         return model.alert == nil
     }
     #endif
-
-    /// What the application offers on the device: the runtime's, with text
-    /// messages held back until a release image carries the service. A
-    /// development launch can switch them on (`TextMessagesLaunch`); an App
-    /// Store build has no such launch.
-    private static func deviceCapabilities() -> Capabilities {
-        #if APP_STORE
-        .device
-        #else
-        TextMessagesLaunch.capabilities(in: ProcessInfo.processInfo.environment)
-        #endif
-    }
 
     // MARK: Device
 

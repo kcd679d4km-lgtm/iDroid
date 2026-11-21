@@ -290,14 +290,6 @@ if(UML_BUILD_KERNARIUM_RUNTIME)
     add_subdirectory(Kernarium/Runtime)
 endif()
 
-get_property(_uml_aot_fw_dir GLOBAL PROPERTY
-    UML_AOT_FRAMEWORK_DIR)
-if(_uml_aot_fw_dir)
-    cmake_path(GET _uml_aot_fw_dir PARENT_PATH
-        _uml_aot_fw_parent)
-    list(APPEND CMAKE_BUILD_RPATH "${_uml_aot_fw_parent}")
-endif()
-
 if(UML_BUILD_UNIT_TESTS OR UML_BUILD_INTEGRATION_TESTS OR
    UML_BUILD_TOOLING_TESTS)
     add_subdirectory(tests)

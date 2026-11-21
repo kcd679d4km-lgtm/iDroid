@@ -441,29 +441,6 @@ extern "C" int darwin_uml_vm_invalidate_code(unsigned long generation,
 		address, length);
 }
 
-extern "C" int darwin_uml_vm_invalidate_code_frame(unsigned long generation,
-						  unsigned long address,
-						  unsigned long length, int fd,
-						  unsigned long long offset)
-{
-	const auto range = address_range(reinterpret_cast<void *>(address),
-		length);
-	if (range == AddressDomain::invalid)
-		return invalid_address_range();
-	/* Only translated guest pages cache code; native pages execute the
-	 * shared frame directly. */
-	if (range != AddressDomain::guest)
-		return 0;
-	return darwin_uml_static_vm_invalidate_code_frame(generation, address,
-		length, fd, offset);
-}
-
-extern "C" int darwin_uml_vm_invalidate_code_frames(
-	int fd, unsigned long long offset, unsigned long long length)
-{
-	return darwin_uml_static_vm_invalidate_code_frames(fd, offset, length);
-}
-
 /* The uaccess reaches the page through the kernel's own alias, which it
  * refreshes and writes back itself on 4 KiB, and installs nothing here, so no
  * 4 KiB native shadow needs publishing first: the walker that installs the

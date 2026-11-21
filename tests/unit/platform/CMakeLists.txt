@@ -43,14 +43,6 @@ uml_add_unit_test(NAME platform-h264-stream
     COMMAND uml_h264_stream_tests ${PROJECT_SOURCE_DIR}/tests/support/video
     LABELS video)
 
-# The decoder's VP9 packet and header readers, which need no hardware and are
-# what its bounds on a guest's packets stand on.
-add_executable(uml_vp9_stream_tests vp9_stream_tests.cpp)
-target_link_libraries(uml_vp9_stream_tests PRIVATE UML::VideoDecoder)
-uml_add_unit_test(NAME platform-vp9-stream
-    COMMAND uml_vp9_stream_tests ${PROJECT_SOURCE_DIR}/tests/support/video
-    LABELS video)
-
 # The video encoder backend's Annex B and parameter-set readers, which need no
 # hardware.
 add_executable(uml_video_encoder_bitstream_tests video_encoder_bitstream_tests.cpp)
@@ -157,15 +149,6 @@ target_include_directories(uml_host_thermal_tests PRIVATE
 uml_add_unit_test(
     NAME platform-host-thermal
     COMMAND uml_host_thermal_tests)
-
-# The host's network path: the state every report replaces, which statuses are
-# an outage, and the system monitor's report at each start, until it ends.
-add_executable(uml_host_network_path_tests host_network_path_tests.cpp)
-target_link_libraries(uml_host_network_path_tests PRIVATE
-    UML::HostNetworkPathTestVariant)
-uml_add_unit_test(
-    NAME platform-host-network-path
-    COMMAND uml_host_network_path_tests)
 
 # The host GPU's fixed budget: what the limit leaves above the floor, the
 # guest's RAM where there is no limit, and when the process is short of the

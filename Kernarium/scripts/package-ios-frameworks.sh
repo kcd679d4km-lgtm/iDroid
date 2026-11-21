@@ -48,15 +48,6 @@
 # required-reason API the manifest does not declare, and a framework
 # Info.plist with an empty version or no MinimumOSVersion.
 #
-# UmlArm64Aot.xcframework carries the ahead-of-time code the Android runtime
-# links (darwin/cpu/arm64/aot): a slice for each packaged SDK whose Android
-# runtime links it and none for one whose runtime does not, so the framework
-# is in the application exactly when its runtime needs it. Which runtime links
-# it is the runtime tree's own configuration (UML_AOT_MODE, UML_AOT_ARTIFACT);
-# the Linux runtime never does. An archive configuration embeds it only while
-# the accepted AOT descriptor allows it (scripts/check-embedded-artifacts.py
-# --aot).
-#
 # KernariumTests also links HostBattery.xcframework: the Apple battery
 # provider's archive, as the Android runtime links it, with its header. The
 # application neither links nor embeds it, and the test bundle loads no second
@@ -153,7 +144,6 @@ find_tool OTOOL otool
 find_tool NM nm
 find_tool STRIP strip
 find_tool PYTHON python3
-find_tool DSYMUTIL dsymutil
 
 RUNTIME_4K="KRuntime_6_18_4K"
 
@@ -197,10 +187,6 @@ HOST_VIDEO_ENCODER_HEADERS="$ROOT_DIR/darwin/platform/video_encoder.hpp $ROOT_DI
 SIMULATOR_HOST_BATTERY="$ROOT_DIR/.build/$SIMULATOR_ANDROID_TREE/darwin/platform/libuml_host_battery.a"
 SIMULATOR_ANDROID_RUNTIME_TREE="$ROOT_DIR/.build/$SIMULATOR_ANDROID_TREE"
 SIMULATOR_HOST_VIDEO_ENCODER="$SIMULATOR_ANDROID_RUNTIME_TREE/darwin/platform/libuml_video_encoder.a"
-# The ahead-of-time framework of each Android runtime tree.
-AOT_FRAMEWORK=UmlArm64Aot
-DEVICE_AOT="$ANDROID_RUNTIME_TREE/lib/$AOT_FRAMEWORK.framework"
-SIMULATOR_AOT="$SIMULATOR_ANDROID_RUNTIME_TREE/lib/$AOT_FRAMEWORK.framework"
 
 # Mesa supplies the host GL provider as MesaEGL and MesaGallium. The device
 # stack also has the Vulkan driver they render on, KosmicKrisp; the Simulator's
@@ -258,36 +244,6 @@ if has_sdk simulator; then
 		fail "could not build the host video encoder archive"
 	[ -f "$SIMULATOR_HOST_VIDEO_ENCODER" ] ||
 		fail "missing host video encoder archive: $SIMULATOR_HOST_VIDEO_ENCODER"
-fi
-
-# links_aot BINARY: whether a runtime binary loads the ahead-of-time framework.
-links_aot()
-{
-	"$OTOOL" -L "$1" | LC_ALL=C grep -q "@rpath/$AOT_FRAMEWORK.framework/$AOT_FRAMEWORK"
-}
-AOT_DEVICE=0
-AOT_SIMULATOR=0
-if has_sdk device; then
-	if links_aot "$DEVICE_RUNTIME_ANDROID/$RUNTIME_ANDROID_4K"; then
-		AOT_DEVICE=1
-		[ -d "$DEVICE_AOT" ] || fail "missing framework slice: $DEVICE_AOT"
-	fi
-	if [ "$RUNTIMES" = all ] && links_aot "$DEVICE_RUNTIME_4K/$RUNTIME_4K"; then
-		fail "$RUNTIME_4K links the ahead-of-time framework, which only the Android runtime may"
-	fi
-fi
-if has_sdk simulator; then
-	if links_aot "$SIMULATOR_RUNTIME_ANDROID/$RUNTIME_ANDROID_4K"; then
-		AOT_SIMULATOR=1
-		[ -d "$SIMULATOR_AOT" ] || fail "missing framework slice: $SIMULATOR_AOT"
-	fi
-	if [ "$RUNTIMES" = all ] && links_aot "$SIMULATOR_RUNTIME_4K/$RUNTIME_4K"; then
-		fail "$RUNTIME_4K links the ahead-of-time framework, which only the Android runtime may"
-	fi
-fi
-AOT_FRAMEWORKS=
-if [ "$AOT_DEVICE" -eq 1 ] || [ "$AOT_SIMULATOR" -eq 1 ]; then
-	AOT_FRAMEWORKS=$AOT_FRAMEWORK
 fi
 
 OUTPUT_PARENT=$(dirname -- "$OUTPUT")
@@ -358,24 +314,6 @@ create_xcframework "$RUNTIME_ANDROID_4K" \
 	"$(device_slice "$DEVICE_RUNTIME_ANDROID")" \
 	"$(simulator_slice "$SIMULATOR_RUNTIME_ANDROID")" \
 	"$DEVICE_RUNTIME_ANDROID.dSYM" "$SIMULATOR_RUNTIME_ANDROID.dSYM"
-if [ -n "$AOT_FRAMEWORKS" ]; then
-	# The framework holds no debug information, so its dSYM is the binary's
-	# identity alone, which an archive's symbol collection expects.
-	aot_device=
-	aot_simulator=
-	if [ "$AOT_DEVICE" -eq 1 ]; then
-		aot_device=$DEVICE_AOT
-		"$DSYMUTIL" "$DEVICE_AOT/$AOT_FRAMEWORK" -o "$DEVICE_AOT.dSYM" 2>/dev/null ||
-			fail "could not make the dSYM of $DEVICE_AOT"
-	fi
-	if [ "$AOT_SIMULATOR" -eq 1 ]; then
-		aot_simulator=$SIMULATOR_AOT
-		"$DSYMUTIL" "$SIMULATOR_AOT/$AOT_FRAMEWORK" -o "$SIMULATOR_AOT.dSYM" 2>/dev/null ||
-			fail "could not make the dSYM of $SIMULATOR_AOT"
-	fi
-	create_xcframework "$AOT_FRAMEWORK" "$aot_device" "$aot_simulator" \
-		"$DEVICE_AOT.dSYM" "$SIMULATOR_AOT.dSYM"
-fi
 for framework in $GL_FRAMEWORKS; do
 	create_xcframework "$framework" \
 		"$(device_slice "$DEVICE_GPU/$framework.framework")" \
@@ -413,7 +351,7 @@ strip_debug_maps()
 		done
 	done
 }
-strip_debug_maps $RUNTIME_FRAMEWORKS $GL_FRAMEWORKS $AOT_FRAMEWORKS
+strip_debug_maps $RUNTIME_FRAMEWORKS $GL_FRAMEWORKS
 if has_sdk device; then
 	strip_debug_maps KosmicKrisp
 fi
@@ -435,9 +373,6 @@ for slice_platform in $PACKAGED_SLICES; do
 done
 for framework in $RUNTIME_FRAMEWORKS; do
 	install_privacy_manifest "$framework" KRuntime
-done
-for framework in $AOT_FRAMEWORKS; do
-	install_privacy_manifest "$framework" "$framework"
 done
 for framework in $GPU_FRAMEWORKS; do
 	[ ! -d "$STAGE/$framework.xcframework" ] ||
@@ -485,14 +420,8 @@ packaged_frameworks()
 {
 	slice=$1
 	case "$slice" in
-	ios-arm64)
-		printf '%s ' $RUNTIME_FRAMEWORKS $GPU_FRAMEWORKS
-		[ "$AOT_DEVICE" -eq 0 ] || printf '%s ' "$AOT_FRAMEWORK"
-		;;
-	*)
-		printf '%s ' $RUNTIME_FRAMEWORKS $GL_FRAMEWORKS
-		[ "$AOT_SIMULATOR" -eq 0 ] || printf '%s ' "$AOT_FRAMEWORK"
-		;;
+	ios-arm64) printf '%s ' $RUNTIME_FRAMEWORKS $GPU_FRAMEWORKS ;;
+	*) printf '%s ' $RUNTIME_FRAMEWORKS $GL_FRAMEWORKS ;;
 	esac
 }
 for slice_platform in $PACKAGED_SLICES; do
@@ -638,7 +567,7 @@ done
 # The device slices are what an upload carries: each must declare the
 # required-reason APIs its binary uses and carry a complete Info.plist.
 if has_sdk device; then
-	for framework in $RUNTIME_FRAMEWORKS $GPU_FRAMEWORKS $([ "$AOT_DEVICE" -eq 0 ] || printf '%s' "$AOT_FRAMEWORK"); do
+	for framework in $RUNTIME_FRAMEWORKS $GPU_FRAMEWORKS; do
 		"$PYTHON" -B "$ROOT_DIR/scripts/check-privacy-manifests.py" \
 			"$STAGE/$framework.xcframework/ios-arm64/$framework.framework" ||
 			fail "the device slice of $framework fails the privacy manifest check"
@@ -648,10 +577,6 @@ fi
 # The x86-64 JIT and the FEXCore it embeds are macOS-only.
 "$PYTHON" -B "$ROOT_DIR/scripts/check-no-fexcore.py" "$STAGE" ||
 	fail "a packaged iOS framework carries FEXCore"
-
-# The AOT runtime's diagnostics build is for tests only.
-"$PYTHON" -B "$ROOT_DIR/scripts/check-no-aot-diagnostics.py" "$STAGE" ||
-	fail "a packaged iOS framework carries the AOT diagnostics build"
 
 # Publish with one atomic rename, so the XCFrameworks are never absent and a
 # concurrent run is never moved below another's tree: the first publish is an

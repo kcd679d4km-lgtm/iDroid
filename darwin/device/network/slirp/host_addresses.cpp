@@ -7,8 +7,6 @@
 #include <sys/socket.h>
 
 #include <algorithm>
-#include <iterator>
-#include <memory>
 #include <utility>
 
 namespace uml::network {
@@ -25,31 +23,15 @@ constexpr std::uint32_t ipv4_value(const HostIpv4 &address) noexcept
 
 void HostAddresses::assign_ipv4(std::vector<std::uint32_t> addresses)
 {
-	assign_ipv4(std::move(addresses), {});
-}
-
-void HostAddresses::assign_ipv4(std::vector<std::uint32_t> assigned,
-				std::vector<std::uint32_t> broadcast)
-{
 	/* The unspecified address and the limited broadcast address are no
 	 * interface's: the guest's DHCP goes to the second, and SLiRP answers
 	 * for it. */
-	const auto tidy = [](std::vector<std::uint32_t> &addresses) {
-		std::erase_if(addresses, [](std::uint32_t address) {
-			return address == 0 || address == 0xffffffffU;
-		});
-		std::ranges::sort(addresses);
-		addresses.erase(std::ranges::unique(addresses).begin(),
-				addresses.end());
-	};
-	tidy(assigned);
-	tidy(broadcast);
-	std::vector<std::uint32_t> all;
-	all.reserve(assigned.size() + broadcast.size());
-	std::ranges::merge(assigned, broadcast, std::back_inserter(all));
-	all.erase(std::ranges::unique(all).begin(), all.end());
-	ipv4_ = std::move(all);
-	assigned_ = std::move(assigned);
+	std::erase_if(addresses, [](std::uint32_t address) {
+		return address == 0 || address == 0xffffffffU;
+	});
+	std::ranges::sort(addresses);
+	addresses.erase(std::ranges::unique(addresses).begin(), addresses.end());
+	ipv4_ = std::move(addresses);
 }
 
 const HostAddresses &HostAddresses::everything() noexcept
@@ -72,53 +54,33 @@ bool HostAddresses::contains(const HostIpv4 &address) const noexcept
 	return std::ranges::binary_search(ipv4_, ipv4_value(address));
 }
 
-bool HostAddresses::assigned(const HostIpv4 &address) const noexcept
+std::optional<HostAddresses> read_host_addresses()
 {
-	if (all_)
-		return contains(address);
-	return std::ranges::binary_search(assigned_, ipv4_value(address));
-}
-
-bool HostAddresses::lost_since(const HostAddresses &earlier) const noexcept
-{
-	return !std::ranges::includes(assigned_, earlier.assigned_);
-}
-
-HostAddresses host_addresses_from(const ifaddrs *list)
-{
-	std::vector<std::uint32_t> assigned;
-	std::vector<std::uint32_t> broadcast;
-	const auto add = [](std::vector<std::uint32_t> &into,
-			    const sockaddr *address) {
+	ifaddrs *list = nullptr;
+	if (::getifaddrs(&list) != 0)
+		return std::nullopt;
+	std::vector<std::uint32_t> ipv4;
+	const auto add = [&](const sockaddr *address) {
 		if (address == nullptr || address->sa_family != AF_INET)
 			return;
-		into.push_back(ntohl(
+		ipv4.push_back(ntohl(
 			reinterpret_cast<const sockaddr_in *>(address)->sin_addr
 				.s_addr));
 	};
 	for (const ifaddrs *entry = list; entry != nullptr;
 	     entry = entry->ifa_next) {
 		/* The family switch: an IPv6 address joins its own table here. */
-		add(assigned, entry->ifa_addr);
+		add(entry->ifa_addr);
 		/* ifa_dstaddr is the broadcast address on a broadcast
 		 * interface and the far end of a point-to-point link, which
 		 * is not the host's. */
 		if ((entry->ifa_flags & IFF_BROADCAST) != 0)
-			add(broadcast, entry->ifa_dstaddr);
+			add(entry->ifa_dstaddr);
 	}
+	::freeifaddrs(list);
 	HostAddresses result;
-	result.assign_ipv4(std::move(assigned), std::move(broadcast));
+	result.assign_ipv4(std::move(ipv4));
 	return result;
-}
-
-std::optional<HostAddresses> read_host_addresses()
-{
-	ifaddrs *list = nullptr;
-	if (::getifaddrs(&list) != 0)
-		return std::nullopt;
-	const std::unique_ptr<ifaddrs, decltype(&::freeifaddrs)> owned{
-		list, &::freeifaddrs};
-	return host_addresses_from(list);
 }
 
 } // namespace uml::network

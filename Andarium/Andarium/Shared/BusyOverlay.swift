@@ -36,10 +36,6 @@ struct BusyOverlay: View {
         // happening when it appears, for a task (a copy of a large file) that can take minutes.
         .accessibilityAddTraits(.isModal)
         .onAppear { AccessibilityNotification.Announcement(state.title).post() }
-        .onChange(of: state.result != nil) { _, ended in
-            // How it ended, in place of what it was doing.
-            if ended { VoiceOver.screenChanged("\(state.title). \(state.detail)") }
-        }
     }
 
     private func content(scrolls: Bool) -> some View {
@@ -72,7 +68,6 @@ struct BusyOverlay: View {
         HStack(alignment: .firstTextBaseline) {
             Text(state.title.keepingTogether)
                 .font(.title3.weight(.bold))
-                .accessibilityAddTraits(.isHeader)
             Spacer()
             if let progress = state.progress {
                 Text("\(Int((progress * 100).rounded()))%")
@@ -80,11 +75,9 @@ struct BusyOverlay: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .contentTransition(.numericText())
-                    // The bar says it.
-                    .accessibilityHidden(true)
             }
         }
-        ProgressBar(value: state.progress ?? 0, label: state.title)
+        ProgressBar(value: state.progress ?? 0)
         detail(scrolls: scrolls)
         if let cancel = state.cancel {
             Button("Cancel", role: .cancel, action: cancel.action)
@@ -118,7 +111,6 @@ struct BusyOverlay: View {
                 .accessibilityHidden(true)
             Text(state.title.keepingTogether)
                 .font(.title3.weight(.bold))
-                .accessibilityAddTraits(.isHeader)
         }
         detail(scrolls: scrolls)
         Button(result.failed ? "OK" : "Done", action: result.dismiss.action)

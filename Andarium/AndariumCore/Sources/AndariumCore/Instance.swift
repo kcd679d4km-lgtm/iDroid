@@ -52,19 +52,10 @@ public struct ReleaseIdentity: Equatable, Sendable {
     public var minimumGiB: Int
     public var defaultGiB: Int
     public var maximumGiB: Int
-    /// Whether the manifest says the system is an unsigned proof image
-    /// (`acceptance` "unsigned-proof", staged by `Andarium/scripts/
-    /// stage-system-image.py --unsigned-proof` for a developer build). Such a
-    /// system never updates an instance that has data, and an instance it
-    /// created, which records so (`InstanceState.isUnsignedProof`), never
-    /// updates to another system (`InstanceRules.decide`). Nothing else
-    /// decides it: not the release ID.
-    public var isUnsignedProof: Bool
 
     public init(
         releaseID: String, buildFingerprint: String, buildNumber: Int, securityPatch: String,
-        systemDiskSHA256: String, dataLayout: Int, minimumGiB: Int, defaultGiB: Int, maximumGiB: Int,
-        isUnsignedProof: Bool = false
+        systemDiskSHA256: String, dataLayout: Int, minimumGiB: Int, defaultGiB: Int, maximumGiB: Int
     ) {
         self.releaseID = releaseID
         self.buildFingerprint = buildFingerprint
@@ -75,7 +66,6 @@ public struct ReleaseIdentity: Equatable, Sendable {
         self.minimumGiB = minimumGiB
         self.defaultGiB = defaultGiB
         self.maximumGiB = maximumGiB
-        self.isUnsignedProof = isUnsignedProof
     }
 
     /// The identity from a release's `release-manifest.json` and
@@ -115,7 +105,7 @@ public struct ReleaseIdentity: Equatable, Sendable {
         self.init(
             releaseID: id, buildFingerprint: fingerprint, buildNumber: buildNumber, securityPatch: patch,
             systemDiskSHA256: sha, dataLayout: dataLayout, minimumGiB: minimum, defaultGiB: standard,
-            maximumGiB: maximum, isUnsignedProof: manifest["acceptance"] as? String == "unsigned-proof"
+            maximumGiB: maximum
         )
     }
 
@@ -128,10 +118,7 @@ public struct ReleaseIdentity: Equatable, Sendable {
     }
 }
 
-/// `instance.json`: schema 1, or schema 2 for an instance an unsigned proof
-/// created, which also says so (`unsigned_proof`). A reader of schema 1 alone
-/// refuses a schema 2 record, so an app version before the proof rule cannot
-/// update a proof's instance to a signed release.
+/// `instance.json`, schema 1.
 public struct InstanceState: Equatable, Sendable {
     public struct Completed: Equatable, Sendable, Codable {
         public var releaseID: String
@@ -186,14 +173,11 @@ public struct InstanceState: Equatable, Sendable {
     public var lastBooted: String
     public var lastCompleted: Completed?
     public var pendingUpdate: Pending?
-    /// Whether an unsigned proof created the instance: the record says so
-    /// itself, whatever the release ID looks like.
-    public var isUnsignedProof: Bool
 
     public init(
         dataLayout: Int, releaseID: String, buildFingerprint: String, buildIncremental: String,
         systemDiskSHA256: String, createdWith: String, lastBooted: String,
-        lastCompleted: Completed? = nil, pendingUpdate: Pending? = nil, isUnsignedProof: Bool = false
+        lastCompleted: Completed? = nil, pendingUpdate: Pending? = nil
     ) {
         self.dataLayout = dataLayout
         self.releaseID = releaseID
@@ -204,7 +188,6 @@ public struct InstanceState: Equatable, Sendable {
         self.lastBooted = lastBooted
         self.lastCompleted = lastCompleted
         self.pendingUpdate = pendingUpdate
-        self.isUnsignedProof = isUnsignedProof
     }
 
     public var buildNumber: Int { Int(buildIncremental) ?? 0 }
@@ -214,11 +197,10 @@ public struct InstanceState: Equatable, Sendable {
         self.init(
             dataLayout: release.dataLayout, releaseID: release.releaseID, buildFingerprint: release.buildFingerprint,
             buildIncremental: String(release.buildNumber), systemDiskSHA256: release.systemDiskSHA256,
-            createdWith: release.releaseID, lastBooted: when, isUnsignedProof: release.isUnsignedProof
+            createdWith: release.releaseID, lastBooted: when
         )
     }
 
-    /// The keys of a schema 1 record; a schema 2 record has `unsigned_proof` too.
     static let keys: Set<String> = [
         "schema", "data_layout", "release_id", "build_fingerprint", "build_incremental", "system_disk_sha256",
         "created_with", "last_booted", "last_completed", "pending_update",
@@ -237,16 +219,11 @@ extension InstanceState: Codable {
         case lastBooted = "last_booted"
         case lastCompleted = "last_completed"
         case pendingUpdate = "pending_update"
-        case unsignedProof = "unsigned_proof"
     }
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        // Schema 1 is every signed release's record; schema 2 is a proof's, and
-        // says `unsigned_proof` true.
-        let schema = try values.decode(Int.self, forKey: .schema)
-        let proof = schema == 2 ? try values.decodeIfPresent(Bool.self, forKey: .unsignedProof) : nil
-        guard schema == 1 || proof == true else {
+        guard try values.decode(Int.self, forKey: .schema) == 1 else {
             throw InstanceError.state("This virtual machine's instance.json is of a schema Andarium does not know.")
         }
         let build = try values.decode(String.self, forKey: .buildIncremental)
@@ -262,15 +239,14 @@ extension InstanceState: Codable {
             createdWith: try values.decode(String.self, forKey: .createdWith),
             lastBooted: try values.decode(String.self, forKey: .lastBooted),
             lastCompleted: try values.decodeIfPresent(Completed.self, forKey: .lastCompleted),
-            pendingUpdate: try values.decodeIfPresent(Pending.self, forKey: .pendingUpdate),
-            isUnsignedProof: proof == true
+            pendingUpdate: try values.decodeIfPresent(Pending.self, forKey: .pendingUpdate)
         )
     }
 
     /// The two optional fields are written as `null`, as the schema has them.
     public func encode(to encoder: Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
-        try values.encode(isUnsignedProof ? 2 : 1, forKey: .schema)
+        try values.encode(1, forKey: .schema)
         try values.encode(dataLayout, forKey: .dataLayout)
         try values.encode(releaseID, forKey: .releaseID)
         try values.encode(buildFingerprint, forKey: .buildFingerprint)
@@ -280,7 +256,6 @@ extension InstanceState: Codable {
         try values.encode(lastBooted, forKey: .lastBooted)
         if let lastCompleted { try values.encode(lastCompleted, forKey: .lastCompleted) } else { try values.encodeNil(forKey: .lastCompleted) }
         if let pendingUpdate { try values.encode(pendingUpdate, forKey: .pendingUpdate) } else { try values.encodeNil(forKey: .pendingUpdate) }
-        if isUnsignedProof { try values.encode(true, forKey: .unsignedProof) }
     }
 }
 
@@ -322,8 +297,7 @@ public struct InstanceDecision: Equatable, Sendable {
 
 public enum InstanceRules {
     /// What to do before starting `release` on an instance. Pure: it looks at
-    /// nothing else, so every implementation reproduces it from the vectors
-    /// (the rule for an unsigned proof, below, is the application's own).
+    /// nothing else, so every implementation reproduces it from the vectors.
     public static func decide(
         state: InstanceState?, dataDiskExists: Bool, snapshotExists: Bool,
         release: ReleaseIdentity, flags: InstanceFlags = InstanceFlags()
@@ -339,18 +313,6 @@ public enum InstanceRules {
                 return InstanceDecision(.refuseConflict, "The virtual machine's data has no record of which system wrote it.")
             }
             return InstanceDecision(.create, "A new guest.")
-        }
-        // An unsigned proof is for a fresh or isolated instance: it never takes
-        // over data another system wrote, and the data it wrote never goes to
-        // another system. The instance is erased instead (the way out of every
-        // refusal), which Home offers as for any other mismatch, in its words.
-        // Two systems that share a release ID are two systems when only one is
-        // a proof: the markers are compared as well as the IDs, and before a
-        // retry or a restore of a pending update is looked at.
-        if release.isUnsignedProof || state.isUnsignedProof,
-           release.isUnsignedProof != state.isUnsignedProof || release.releaseID != state.releaseID,
-           dataDiskExists || snapshotExists {
-            return InstanceDecision(.refuseConflict, StartBlock.mismatch.explanation)
         }
         if let pending = state.pendingUpdate {
             if flags.restoreSnapshot {
@@ -434,8 +396,7 @@ enum CloneFile {
 }
 
 /// An instance's files: `data.img`, `instance.json`, the installation's
-/// identity, the snapshot of an update and the text message notice
-/// (`TextMessageNotice`), in one directory.
+/// identity and the snapshot of an update, in one directory.
 public struct InstanceFiles: Sendable {
     public static let dataDisk = "data.img"
     public static let stateFile = "instance.json"
@@ -452,11 +413,6 @@ public struct InstanceFiles: Sendable {
     /// erase deletes it, so the next installation gets values of its own. The
     /// temporary name a write of it uses starts with the same text.
     public static let identityFile = "identity.json"
-    /// What the text message bar owes the person about a message whose outcome
-    /// was not yet shown (`TextMessageNotice`). It belongs to the data disk's
-    /// inbox: an erase and a new data disk delete it, since there is no inbox
-    /// left to check.
-    public static let textMessageNotice = TextMessageNotice.fileName
 
     public var directory: URL
 
@@ -534,9 +490,8 @@ public struct InstanceFiles: Sendable {
     }
 
     /// Deletes the data disk, the record, the installation's identity, the
-    /// copies an update left, the user's snapshots and the text message
-    /// notice, trying each of them; the first failure is thrown once the rest
-    /// are done.
+    /// copies an update left and the user's snapshots, trying each of them;
+    /// the first failure is thrown once the rest are done.
     public func removeAll() throws {
         let manager = FileManager.default
         var doomed = [data, state]
@@ -549,7 +504,6 @@ public struct InstanceFiles: Sendable {
         // disk's: a guest made after this one starts with a record of its own.
         doomed.append(PartialSweepLedger.url(in: directory))
         doomed.append(firstBoot)
-        doomed.append(directory.appendingPathComponent(Self.textMessageNotice))
         var failure: Error?
         for url in doomed where manager.fileExists(atPath: url.path) {
             do { try manager.removeItem(at: url) } catch { failure = failure ?? error }
@@ -601,8 +555,6 @@ public struct InstanceFiles: Sendable {
             where entry.hasPrefix(Self.identityFile) {
                 try? manager.removeItem(at: directory.appendingPathComponent(entry))
             }
-            // And no inbox: a notice about a message of the old disk is no longer true.
-            try? manager.removeItem(at: directory.appendingPathComponent(Self.textMessageNotice))
             // A data disk that is made at the next start holds nothing.
             if !manager.fileExists(atPath: data.path) { try PartialSweepLedger.markSettled(in: directory) }
             let created = InstanceState(creating: release, at: when)

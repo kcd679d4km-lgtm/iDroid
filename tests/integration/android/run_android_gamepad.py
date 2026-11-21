@@ -1343,27 +1343,21 @@ def start_guest(options: argparse.Namespace, adb: str, private: pathlib.Path) ->
         f"--vsock-forward=127.0.0.1:0-{wire.PORT}",
     ]
     log = private / "emulator.log"
-    with log.open("wb") as stream:
-        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=stream, stderr=stream,
-                                   start_new_session=True, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+    stream = log.open("wb")
+    process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=stream, stderr=stream,
+                               start_new_session=True, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+    stream.close()
     serial = f"127.0.0.1:{options.adb_port}"
-    # The emulator is this function's until it returns the guest: the caller's cleanup knows a guest only
-    # from that return, so a failure or an interrupt (a timeout, Ctrl-C) before it stops the emulator here.
-    try:
-        guest = Guest(adb, serial, process, log, vsock_forward_port(log, process, wire.PORT))
-        boot_android.wait_for_adb(adb, serial, process, options.boot_timeout)
-        if not boot_android.wait_for_boot_completed(adb, serial, process, options.boot_timeout):
-            raise Failure("Android did not reach sys.boot_completed")
-        # A pending update counts as applied from here, as for the launcher; a fresh guest skips its wizard.
-        boot_android.android_instance.booted(instance, identity)
-        if not options.instance:
-            boot_android.provision_guest(adb, serial)
-        print(f"booted; settling for {SETTLE_SECONDS} s")
-        time.sleep(SETTLE_SECONDS)
-    except BaseException:
-        boot_android.disconnect_adb(adb, serial)
-        boot_android.stop_guest(process)
-        raise
+    guest = Guest(adb, serial, process, log, vsock_forward_port(log, process, wire.PORT))
+    boot_android.wait_for_adb(adb, serial, process, options.boot_timeout)
+    if not boot_android.wait_for_boot_completed(adb, serial, process, options.boot_timeout):
+        raise Failure("Android did not reach sys.boot_completed")
+    # A pending update counts as applied from here, as for the launcher; a fresh guest skips its wizard.
+    boot_android.android_instance.booted(instance, identity)
+    if not options.instance:
+        boot_android.provision_guest(adb, serial)
+    print(f"booted; settling for {SETTLE_SECONDS} s")
+    time.sleep(SETTLE_SECONDS)
     return guest
 
 

@@ -36,17 +36,3 @@ if(TARGET uml_network_dns_rules)
         COMMAND uml_host_isolation_tests
         LABELS network;slirp)
 endif()
-
-# When a guest connection bound to an address the host lost is reset: the hold
-# a report of a carried path starts, and which host sockets are bound to a lost
-# address.
-if(TARGET uml_network_dns_rules)
-    add_executable(uml_address_reset_tests address_reset_tests.cpp)
-    target_include_directories(uml_address_reset_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/device/network/slirp)
-    target_link_libraries(uml_address_reset_tests PRIVATE
-        UML::NetworkDnsRules)
-    uml_add_unit_test(NAME network-address-reset-rules
-        COMMAND uml_address_reset_tests
-        LABELS network;slirp)
-endif()

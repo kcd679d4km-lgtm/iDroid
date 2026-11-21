@@ -11,13 +11,6 @@
  * never addresses the network for a guest's DNS, and the guest follows the
  * device's own resolver configuration (VPN split DNS, encrypted DNS profiles).
  *
- * While the host has no network path, the system resolver answers a name it
- * cannot look up with "no such record" at once, which a guest takes for a
- * fact: apps report a missing host and nothing retries. A negative answer
- * given in that state is turned into SERVFAIL, which a stub resolver retries.
- * That includes a chain of aliases that ends in one. Answers that carry a
- * record of the asked type, and failures, stand as they are.
- *
  * One thread owns every dns_sd reference, the DNS-over-TCP listener and its
  * connections. SLiRP's worker hands it UDP queries; replies go to the guest
  * through the frame sink, which must be safe to call from this thread.
@@ -27,7 +20,6 @@
 #include "dns_message.hpp"
 #include "network_counters.hpp"
 #include "platform/descriptor.hpp"
-#include "platform/host_network_path.hpp"
 #include "socket_paths.hpp"
 
 #include <array>
@@ -94,14 +86,6 @@ public:
 	void set_counters(NetworkCounters *counters) noexcept
 	{
 		counters_ = counters;
-	}
-	/* Where the host's network path is read, at the moment each query is
-	 * answered; null means a path that is always usable. Set before start(),
-	 * and the state outlives the resolver's thread. */
-	void set_network_path(
-		const uml::platform::HostNetworkPathState *path) noexcept
-	{
-		path_ = path;
 	}
 	/* Cancels every query, closes every connection and joins the thread;
 	 * no frame reaches the sink after it returns. */
@@ -174,16 +158,6 @@ public:
 	{
 		pending_limit_for_testing_.store(limit, std::memory_order_relaxed);
 	}
-	/* `hook(context)` runs on the resolver's thread just before each query is
-	 * judged by the path state, so a test changes the path between the
-	 * system's answer and the guest's. A null hook turns it off. */
-	void set_before_answer_for_testing(void (*hook)(void *),
-					   void *context) noexcept
-	{
-		before_answer_context_for_testing_.store(
-			context, std::memory_order_relaxed);
-		before_answer_for_testing_.store(hook, std::memory_order_release);
-	}
 #endif
 
 	/* Public for the dns_sd callback; not part of the interface. */
@@ -238,7 +212,6 @@ private:
 
 	FrameSink sink_;
 	NetworkCounters *counters_{};
-	const uml::platform::HostNetworkPathState *path_{};
 	std::jthread worker_;
 	std::array<uml::platform::UniqueDescriptor, 2> wake_pipe_;
 	uml::platform::UniqueDescriptor listener_;
@@ -264,8 +237,6 @@ private:
 	std::atomic<bool> answers_held_for_testing_{};
 	std::atomic_uint64_t answers_dropped_for_testing_{};
 	std::atomic<std::size_t> pending_limit_for_testing_{};
-	std::atomic<void (*)(void *)> before_answer_for_testing_{};
-	std::atomic<void *> before_answer_context_for_testing_{};
 #endif
 };
 

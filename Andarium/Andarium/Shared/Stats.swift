@@ -254,8 +254,6 @@ struct Sparkline: View {
             }
             .frame(maxHeight: .infinity, alignment: .bottom)
         }
-        // The figure beside it says the reading.
-        .accessibilityHidden(true)
     }
 }
 

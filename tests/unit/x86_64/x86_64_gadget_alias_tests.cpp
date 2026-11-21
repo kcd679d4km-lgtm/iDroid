@@ -16,10 +16,6 @@
  *   running    a store through W into the block that is running leaves the
  *              block before it runs the old bytes, for the ordinary store, a
  *              push and the baked entries alike.
- *   stack      the stack twins (the baked [rsp + displacement] entries) over
- *              an alias: a store through W as the stack, whose write entry
- *              carries the tag or has been retired, reaches X's translation
- *              and leaves the block that is running.
  *   serial     an address space's flush leaves its bodies' stamps untouched
  *              yet makes the body compare its source once and register its
  *              frame again; another address space's body on the same frame
@@ -50,7 +46,6 @@
 #include "cpu/x86_64/code_page_registry.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/gadgets/executor.hpp"
-#include "cpu/x86_64/gadgets/native_baked.hpp"
 #include "cpu/x86_64/gadgets/program.hpp"
 #include "cpu/x86_64/software_tlb.hpp"
 #include "frame_accounting.hpp"
@@ -199,10 +194,8 @@ public:
 		return last_dispatches_;
 	}
 
-	/* One dispatch from `cpu`: the block at its RIP, run to its exit. The
-	 * block's stream goes to `stream` when it is given. */
-	[[nodiscard]] Run step(CpuState &cpu,
-		std::vector<std::uintptr_t> *stream = nullptr)
+	/* One dispatch from `cpu`: the block at its RIP, run to its exit. */
+	[[nodiscard]] Run step(CpuState &cpu)
 	{
 		require(darwin_uml_static_vm_execution_context_begin(context_,
 			cpu.rip) == 0, "the execution context was not entered");
@@ -216,10 +209,6 @@ public:
 			memory_, cpu.rip, ExecutionMode::long64, 64);
 		require(selected.status == gadgets::BuildStatus::built &&
 			selected.program != nullptr, "a block did not build");
-		if (stream != nullptr) {
-			const auto words = selected.program->native_stream();
-			stream->assign(words.begin(), words.end());
-		}
 		const auto result = gadgets::execute(
 			*selected.program, cpu, memory_, executor_, 64);
 		require(darwin_uml_static_vm_execution_context_end(context_) == 0);
@@ -266,14 +255,6 @@ public:
 		if ((held & ~write_tag_mask) != (address & ~write_tag_mask))
 			return ~std::uint64_t{0};
 		return held & write_tag_mask;
-	}
-
-	/* Whether the table holds the page at `address`'s write entry with the
-	 * code bit set: an entry of another page, or an empty one, is not one. */
-	[[nodiscard]] bool write_tagged(std::uint64_t address)
-	{
-		const auto tags = write_tags(address);
-		return tags != ~std::uint64_t{0} && (tags & write_code_tag) != 0;
 	}
 
 	[[nodiscard]] const gadgets::ProgramCacheDiagnostics &diagnostics() const
@@ -364,14 +345,10 @@ struct Clean final {
 void test_store()
 {
 	const Clean clean;
-	/* W and the writer are a page and two pages past a multiple of 256 MiB
-	 * from X, which the table's direct index gives entries of their own: at
-	 * an exact multiple, X's own retires would clear W's entry whether or
-	 * not the registration retires the writer's. */
 	constexpr std::uint64_t executable = 0x1000'0000;
-	constexpr std::uint64_t alias = 0x2000'1000;
+	constexpr std::uint64_t alias = 0x2000'0000;
 	constexpr std::uint64_t unheld = 0x2000'4000;
-	constexpr std::uint64_t writer = 0x3000'2000;
+	constexpr std::uint64_t writer = 0x3000'0000;
 	ScratchBacking frame{"uml-x86-alias-store-XXXXXX", page};
 	ScratchBacking other{"uml-x86-alias-other-XXXXXX", page};
 	ScratchBacking code{"uml-x86-alias-code-XXXXXX", page};
@@ -401,7 +378,7 @@ void test_store()
 
 	/* The store through W refills the entry tagged, and X sees the byte. */
 	require(space.run(writer, 2, alias + 1).event == EngineEvent::system_call);
-	require(space.write_tagged(alias),
+	require((space.write_tags(alias) & write_code_tag) != 0,
 		"a write entry for a frame with a holder was not tagged");
 	require(space.run(executable).rax == 2,
 		"a store through another address did not reach the translation");
@@ -419,7 +396,7 @@ void test_running_block()
 {
 	const Clean clean;
 	constexpr std::uint64_t executable = 0x1100'0000;
-	constexpr std::uint64_t alias = 0x2100'1000;
+	constexpr std::uint64_t alias = 0x2100'0000;
 	ScratchBacking frame{"uml-x86-alias-running-XXXXXX", page};
 	/* mov [rdx], bl ; mov eax, imm32 ; syscall: the store names the
 	 * immediate's low byte. */
@@ -439,7 +416,7 @@ void test_running_push()
 {
 	const Clean clean;
 	constexpr std::uint64_t executable = 0x1400'0000;
-	constexpr std::uint64_t alias = 0x2400'1000;
+	constexpr std::uint64_t alias = 0x2400'0000;
 	ScratchBacking frame{"uml-x86-alias-push-XXXXXX", page};
 	/* push rbx ; mov eax, imm32 ; syscall */
 	put(frame, 0, {0x53, 0xb8, 0x01, 0x00, 0x00, 0x00, 0x0f, 0x05});
@@ -465,120 +442,6 @@ void test_running_push()
 			"the running block ran its old bytes after a push through W");
 	}
 	require(space.diagnostics().unheld_runnable == 0);
-}
-
-/* The stack twins are the baked bank's last group, behind the unrecorded
- * twins, whose last entry is XOR's at 64 bits from an immediate into R15. */
-[[nodiscard]] bool is_stack_twin(std::uintptr_t word) noexcept
-{
-	return word >
-		gadgets::baked::uml_x86_64_baked_xor_64_ri_unrecorded[15];
-}
-
-/* The stack twins, which take a store of [rsp + displacement] only through
- * the stack's own write entry when its tag is exact and the run's
- * `write_code` is clear, over a frame that another address translates.
- * Every run starts at the entry of RSP's page, and here RSP is W's.
- *
- * Running: the store names the immediate of the `mov` after it. The entry W's
- * first store filled is tagged, so every later run reaches the twin with a
- * tag and a clear `write_code`, and the twin must still send the store to
- * the ordinary path, which publishes: the block leaves before it runs the
- * old bytes, and the run that follows leaves its own stack twin's load
- * through the table x22 holds.
- *
- * Follows: the entry is filled before the frame has a holder, so the twin
- * hits it, and X's registration retires it; the next store takes the
- * ordinary path, refills it tagged and reaches X, and the run after that
- * starts with the tagged entry and a clear `write_code`. */
-void test_stack_twins_over_an_alias()
-{
-	const Clean clean;
-	{
-		/* W is a page past a multiple of 256 MiB from X: the table's index
-		 * keeps the low 15 bits of the page number, so the rows above, whose
-		 * addresses are exact multiples apart, share one entry between X's
-		 * page and W's, and X's translation retires W's entry whatever
-		 * names it. Here the two have entries of their own. */
-		constexpr std::uint64_t executable = 0x1e00'0000;
-		constexpr std::uint64_t alias = 0x2e00'1000;
-		ScratchBacking frame{"uml-x86-alias-twin-XXXXXX", page};
-		/* mov [rsp-59], bl ; mov eax, imm32 ; add eax, [rsp] ; syscall.
-		 * RSP is W+64, so the store names the immediate's low byte at
-		 * offset 5, and the load reads the word at offset 64. */
-		put(frame, 0, {0x88, 0x5c, 0x24, 0xc5, 0xb8, 0x01, 0x00, 0x00,
-			0x00, 0x03, 0x04, 0x24, 0x0f, 0x05});
-		put(frame, 64, {0x00, 0x01, 0x00, 0x00});
-		Space space{9800};
-		space.map(executable, frame, 0, rx, 1);
-		space.map(alias, frame, 0, rw, 0);
-		for (const std::uint64_t immediate : {1U, 2U, 3U, 2U}) {
-			CpuState cpu{};
-			cpu.rip = executable;
-			cpu.gpr(Register::rbx) = immediate;
-			cpu.gpr(Register::rsp) = alias + 64;
-			std::vector<std::uintptr_t> stream;
-			const auto first = space.step(cpu, &stream);
-			require(stream.size() > 3 && is_stack_twin(stream[0]),
-				"the store did not take its stack twin");
-			require(first.event == EngineEvent::continued &&
-				first.retired == 1 && first.rip == executable + 4,
-				"a stack twin's store through W did not leave the block");
-			Run result{};
-			for (unsigned dispatch = 0; dispatch < 8; ++dispatch) {
-				result = space.step(cpu);
-				if (result.event == EngineEvent::system_call)
-					break;
-			}
-			require(result.event == EngineEvent::system_call);
-			require(result.rax == 0x100 + immediate,
-				"the running block ran its old bytes after a stack "
-				"twin's store through W");
-		}
-		require(space.diagnostics().unheld_runnable == 0);
-	}
-	{
-		constexpr std::uint64_t executable = 0x1f00'0000;
-		constexpr std::uint64_t alias = 0x2f00'1000;
-		constexpr std::uint64_t writer = 0x3f00'2000;
-		ScratchBacking frame{"uml-x86-alias-twin-frame-XXXXXX", page};
-		ScratchBacking code{"uml-x86-alias-twin-code-XXXXXX", page};
-		load_return(frame, 1);
-		/* mov [rsp], bl ; mov [rsp], bl ; syscall: the first store fills W's
-		 * write entry and the second hits it as the stack's own. */
-		put(code, 0, {0x88, 0x1c, 0x24, 0x88, 0x1c, 0x24, 0x0f, 0x05});
-		Space space{9801};
-		space.map(writer, code, 0, rx, 1);
-		space.map(executable, frame, 0, rx, 1);
-		space.map(alias, frame, 0, rw, 0);
-		const auto store = [&](std::uint64_t value) {
-			CpuState cpu{};
-			cpu.rip = writer;
-			cpu.gpr(Register::rbx) = value;
-			cpu.gpr(Register::rsp) = alias + 1;
-			std::vector<std::uintptr_t> stream;
-			const auto result = space.step(cpu, &stream);
-			require(stream.size() > 3 && is_stack_twin(stream[0]) &&
-					is_stack_twin(stream[2]),
-				"the stores did not take their stack twins");
-			return result;
-		};
-		require(store(1).event == EngineEvent::system_call);
-		require(space.write_tags(alias) == 0,
-			"a write entry for a frame with no holder was tagged");
-		const auto first = space.run(executable);
-		require(first.event == EngineEvent::system_call && first.rax == 1);
-		require(space.write_tags(alias) == ~std::uint64_t{0},
-			"the registration did not retire the stack's write entry");
-		for (const std::uint64_t value : {2U, 3U}) {
-			require(store(value).event == EngineEvent::system_call);
-			require(space.write_tagged(alias),
-				"a write entry for a frame with a holder was not tagged");
-			require(space.run(executable).rax == value,
-				"a stack twin's store did not reach the translation");
-		}
-		require(space.diagnostics().unheld_runnable == 0);
-	}
 }
 
 /* An address space's flush moves its flush serial and no stamp: its bodies
@@ -733,7 +596,7 @@ void test_a_revalidation_uses_the_memo()
 	const Clean clean;
 	namespace testing = uml::memory::testing;
 	constexpr std::uint64_t executable = 0x1900'0000;
-	constexpr std::uint64_t alias = 0x2900'2000;
+	constexpr std::uint64_t alias = 0x2900'0000;
 	/* Not in the memo's slot of the executable page. */
 	constexpr std::uint64_t writer = 0x3900'1000;
 	ScratchBacking frame{"uml-x86-alias-memo-v-XXXXXX", page};
@@ -774,7 +637,7 @@ void test_newly_written_bytes_run_after_a_memo_hit()
 	const Clean clean;
 	namespace testing = uml::memory::testing;
 	constexpr std::uint64_t executable = 0x1a00'0000;
-	constexpr std::uint64_t alias = 0x2a00'2000;
+	constexpr std::uint64_t alias = 0x2a00'0000;
 	/* Not in the memo's slot of the executable page. */
 	constexpr std::uint64_t writer = 0x3a00'1000;
 	ScratchBacking frame{"uml-x86-alias-memo-n-XXXXXX", page};
@@ -814,7 +677,7 @@ void test_the_unknown_writer_state_ends_the_memo()
 	namespace testing = uml::memory::testing;
 	const auto start = FrameAccounting::diagnostics();
 	constexpr std::uint64_t x = 0x1b00'0000;
-	constexpr std::uint64_t alias = 0x2b00'1000;
+	constexpr std::uint64_t alias = 0x2b00'0000;
 	ScratchBacking frame{"uml-x86-alias-memo-u-XXXXXX", page};
 	for (std::uint8_t block = 0; block < 5; ++block)
 		put(frame, block * 0x100,
@@ -987,9 +850,7 @@ void test_registration_failure()
 	const auto backing = testing::mapped_backing(frame.descriptor());
 	require(backing != nullptr);
 	const auto before = space.diagnostics();
-	/* The frame's record exists from the mapping, so the registration's own
-	 * allocation, the list of holders, is the one that fails. */
-	testing::fail_allocation_at(testing::AllocationSite::holders, 1);
+	testing::fail_allocation_at(testing::AllocationSite::records, 1);
 	const auto failed = space.run(executable);
 	testing::clear_allocation_failure();
 	require(failed.event == EngineEvent::continued && failed.retired == 1,
@@ -1334,8 +1195,8 @@ void test_a_writer_without_a_registry()
 {
 	const Clean clean;
 	constexpr std::uint64_t executable = 0x1d00'0000;
-	constexpr std::uint64_t alias = 0x2d00'1000;
-	constexpr std::uint64_t writer = 0x3d00'2000;
+	constexpr std::uint64_t alias = 0x2d00'0000;
+	constexpr std::uint64_t writer = 0x3d00'0000;
 	ScratchBacking frame{"uml-x86-alias-bare-XXXXXX", page};
 	ScratchBacking code{"uml-x86-alias-bare-code-XXXXXX", page};
 	load_return(frame, 1);
@@ -1357,7 +1218,7 @@ void test_a_writer_without_a_registry()
 	require((x.run_to_system_call(executable).rax & 0xff) == 2,
 		"a store of an executor with no registry did not reach a block "
 		"translated after its first store");
-	require(w.write_tagged(alias),
+	require((w.write_tags(alias) & write_code_tag) != 0,
 		"a write entry of an executor with no registry was not tagged");
 	require(x.diagnostics().unheld_runnable == 0);
 }
@@ -1381,159 +1242,6 @@ void test_a_failed_registry_is_made_again()
 		"the registry of a generation that failed once was not made again");
 }
 
-/* The kernel stores into another process's page (ptrace, /proc/pid/mem,
- * process_vm_writev) and names that process's generation: a translation of
- * the frame in another generation runs the new bytes, whatever the target's
- * own view of the frame is. The target maps it as data (a writable alias of
- * a frame that another process executes), maps nothing at the page (the
- * kernel fills the software table at faults, so it has not yet), or maps it
- * as code (the control). */
-void test_a_remote_kernel_write_reaches_the_reader()
-{
-	const Clean clean;
-	darwin_uml_static_vm_require_coherent_kernel_code_writes();
-	constexpr std::uint64_t reading = 0x3a00'0000;
-	constexpr std::uint64_t writing = 0x3b00'0000;
-	enum class View { data, absent, code };
-	unsigned long generation = 9500;
-	/* Every view is run, so one run names each that fails. */
-	unsigned failed = 0;
-	for (const auto view : {View::data, View::absent, View::code}) {
-		const char *name = view == View::data ? "data view" :
-			view == View::absent ? "page the target does not map" :
-			"code view";
-		ScratchBacking frame{"uml-x86-alias-remote-XXXXXX", page};
-		load_return(frame, 1);
-		Space reader{generation++};
-		Space target{generation++};
-		reader.map(reading, frame, 0, rx, 1);
-		if (view == View::data)
-			target.map(writing, frame, 0, rw, 0);
-		else if (view == View::code)
-			target.map(writing, frame, 0, rx, 1);
-		require(reader.run_to_system_call(reading).rax == 1);
-		load_return(frame, 2);
-		require(darwin_uml_static_vm_invalidate_code_generation(
-			target.generation(), writing, page) == 0);
-		if (reader.run_to_system_call(reading).rax != 2) {
-			std::fprintf(stderr, "a remote write into a %s did not reach "
-				"a translation of the frame\n", name);
-			++failed;
-		}
-	}
-	require(failed == 0, "a remote kernel write left a translation running");
-}
-
-/* A kernel write that names no frame is published to every generation as
- * the whole space (a code change of length 0), and a unit that links to
- * another keeps running the callee it was linked to unless the executor
- * answers that publication by resetting every link record. The caller A
- * jumps to the callee B, the pair is armed (one dispatch per call), then B's
- * frame is written and the write is published: the next call to A must run
- * the new callee. The routes are the remote hook for a page the target maps
- * as data (a described range, the control) and for one it does not map, and
- * the ordinary kernel write whose buffer the host table does not resolve. */
-void test_a_whole_space_publication_resets_the_links()
-{
-	const Clean clean;
-	darwin_uml_static_vm_require_coherent_kernel_code_writes();
-	constexpr std::uint64_t a = 0x3c00'0000;
-	constexpr std::uint64_t b = a + 0x1000;
-	constexpr std::uint64_t writing = 0x3d00'0000;
-	enum class Route { hook_data, hook_absent, kernel_write_unresolved };
-	unsigned long generation = 9600;
-	unsigned failed = 0;
-	for (const auto route : {Route::hook_data, Route::hook_absent,
-		Route::kernel_write_unresolved}) {
-		const char *name = route == Route::hook_data ?
-			"remote write into a data view" :
-			route == Route::hook_absent ?
-			"remote write into a page the target does not map" :
-			"kernel write through a buffer no frame is named by";
-		ScratchBacking frame_a{"uml-x86-alias-whole-a-XXXXXX", page};
-		ScratchBacking frame_b{"uml-x86-alias-whole-b-XXXXXX", page};
-		/* jmp B */
-		put(frame_a, 0, {0xe9, 0xfb, 0x0f, 0x00, 0x00});
-		load_return(frame_b, 1);
-		Space reader{generation++};
-		Space target{generation++};
-		reader.map(a, frame_a, 0, rx, 1);
-		reader.map(b, frame_b, 0, rx, 1);
-		if (route == Route::hook_data)
-			target.map(writing, frame_b, 0, rw, 0);
-		for (unsigned round = 0; round < 8; ++round)
-			require(reader.run_to_system_call(a).rax == 1);
-		require(reader.last_dispatches() == 1,
-			"the pair A -> B was not armed before the write");
-		load_return(frame_b, 2);
-		if (route == Route::kernel_write_unresolved) {
-			std::array<unsigned char, 8> loose{};
-			require(darwin_uml_static_vm_activate(target.generation()) == 0);
-			require(darwin_uml_static_vm_copy_kernel_write(
-				writing, loose.data(), loose.size()) == 0);
-		} else {
-			require(darwin_uml_static_vm_invalidate_code_generation(
-				target.generation(), writing, page) == 0);
-		}
-		if (reader.run_to_system_call(a).rax != 2) {
-			std::fprintf(stderr, "a %s left the caller running the old "
-				"callee\n", name);
-			++failed;
-		}
-		require(reader.diagnostics().unheld_runnable == 0);
-	}
-	require(failed == 0, "a whole-space publication left a link running");
-}
-
-/* The kernel pins a frame to write it and names it. Between the pin and the
- * write the target replaces what is mapped at the address with another frame,
- * so the call meets a page that is not the frame written, and the reader of
- * the frame written must still hear of the write. The reader runs once more
- * after the replacement, so no publication of the replacement can account for
- * what it hears. */
-void test_a_remote_write_after_the_target_remapped()
-{
-	const Clean clean;
-	darwin_uml_static_vm_require_coherent_kernel_code_writes();
-	constexpr std::uint64_t reading = 0x3e00'0000;
-	constexpr std::uint64_t writing = 0x3f00'0000;
-	enum class Replacement { data, code };
-	unsigned long generation = 9700;
-	unsigned failed = 0;
-	for (const auto replacement : {Replacement::data, Replacement::code}) {
-		const char *name = replacement == Replacement::data ?
-			"a data view of another frame" : "a code view of another frame";
-		ScratchBacking pinned{"uml-x86-alias-remap-p-XXXXXX", page};
-		ScratchBacking other{"uml-x86-alias-remap-o-XXXXXX", page};
-		load_return(pinned, 1);
-		load_return(other, 3);
-		Space reader{generation++};
-		Space target{generation++};
-		reader.map(reading, pinned, 0, rx, 1);
-		target.map(writing, pinned, 0, rw, 0);
-		require(reader.run_to_system_call(reading).rax == 1);
-		/* The pin, then the replacement. */
-		target.unmap(writing);
-		if (replacement == Replacement::data)
-			target.map(writing, other, 0, rw, 0);
-		else
-			target.map(writing, other, 0, rx, 1);
-		require(reader.run_to_system_call(reading).rax == 1);
-		/* The store reaches the pinned frame, which the call names. */
-		load_return(pinned, 2);
-		require(darwin_uml_static_vm_invalidate_code_frame(
-			target.generation(), writing, page, pinned.descriptor(), 0) == 0);
-		if (reader.run_to_system_call(reading).rax != 2) {
-			std::fprintf(stderr, "a remote write after the target replaced "
-				"its mapping with %s did not reach a translation of the "
-				"frame\n", name);
-			++failed;
-		}
-	}
-	require(failed == 0, "a remote write after a remap left a translation "
-		"running");
-}
-
 } // namespace
 
 int main(int argc, char **argv)
@@ -1555,10 +1263,6 @@ int main(int argc, char **argv)
 	if (selected("push")) {
 		test_running_push();
 		std::puts("push ok");
-	}
-	if (selected("stack")) {
-		test_stack_twins_over_an_alias();
-		std::puts("stack twins ok");
 	}
 	if (selected("serial")) {
 		test_flush_serial();
@@ -1613,18 +1317,6 @@ int main(int argc, char **argv)
 	if (selected("memo") || selected("memo-unknown")) {
 		test_the_unknown_writer_state_ends_the_memo();
 		std::puts("memo and unknown writers ok");
-	}
-	if (selected("remote")) {
-		test_a_remote_kernel_write_reaches_the_reader();
-		std::puts("remote kernel write ok");
-	}
-	if (selected("remote") || selected("whole-space")) {
-		test_a_whole_space_publication_resets_the_links();
-		std::puts("whole-space publication and links ok");
-	}
-	if (selected("remote") || selected("remapped")) {
-		test_a_remote_write_after_the_target_remapped();
-		std::puts("remote write after a remap ok");
 	}
 	const auto now = FrameAccounting::diagnostics();
 	require(now.holder_leaks == start.holder_leaks, "a holder leaked");

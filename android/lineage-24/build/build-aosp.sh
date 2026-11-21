@@ -10,7 +10,6 @@ ANDROID_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 METADATA="$ANDROID_ROOT/metadata/lineage.env"
 VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
 MESA_VENUS_VERIFIER="$ANDROID_ROOT/tools/verify-mesa-venus-source.py"
-ACCESSIBILITY_VERIFIER="$ANDROID_ROOT/tools/verify-accessibility-source.py"
 TARGET_FILES_VERIFIER="$ANDROID_ROOT/tools/verify-target-files.py"
 FIRST_BOOT_TOOL="$ANDROID_ROOT/tools/precompile-first-boot-apps.py"
 OUTER_ROOT=$(CDPATH= cd -- "$ANDROID_ROOT/../.." && pwd)
@@ -25,8 +24,6 @@ BUILD_NUMBER_VALUE=
 
 # shellcheck disable=SC1090
 source "$SCRIPT_DIR/common.sh"
-# shellcheck disable=SC1090
-source "$SCRIPT_DIR/build-number-properties.sh"
 
 usage()
 {
@@ -38,9 +35,7 @@ Usage: android/lineage-24/build/build-aosp.sh \
 
 Run locally on the x86_64 Linux builder after applying the routed AOSP patch
 series. The kernel is a published Android kernel artifact of the tracked
-mainline source, whose vmlinux is the runtime image without DWARF. TalkBack
-and eSpeak NG are built from the pinned sources that prepare-sources.sh
-materializes in the workspace. The output
+mainline source, whose vmlinux is the runtime image without DWARF. The output
 directory must be an ignored directory inside the AOSP Repo
 workspace; the pinned Android 17 Soong tree rejects generated host-tool paths
 from an external absolute OUT_DIR. Reusing the same output path lets the
@@ -51,9 +46,7 @@ missing output path is initialized automatically.
 ro.build.version.incremental and the number of its fingerprint. A release
 carries its own number: it is how a data partition tells a newer system from
 an older one, so numbers rise from release to release. A build without one
-keeps AOSP's eng.<user> and cannot be published. Before the build, the output
-directory's build.prop and prop.default files that name another number are
-removed, and a build that leaves one is refused.
+keeps AOSP's eng.<user> and cannot be published.
 EOF
 }
 
@@ -153,7 +146,6 @@ fi
 [[ -f "$METADATA" ]] || fail "AOSP metadata is missing"
 [[ -x "$VERIFIER" ]] || fail "AOSP patch verifier is missing"
 [[ -x "$MESA_VENUS_VERIFIER" ]] || fail "Mesa Venus source verifier is missing"
-[[ -x "$ACCESSIBILITY_VERIFIER" ]] || fail "accessibility source verifier is missing"
 [[ -x "$TARGET_FILES_VERIFIER" ]] || fail "target-files verifier is missing"
 [[ -f "$FIRST_BOOT_TOOL" ]] || fail "first-boot precompile tool is missing"
 [[ -f "$KERNEL_ARTIFACT_VERIFIER" ]] || fail "kernel artifact verifier is missing"
@@ -161,8 +153,6 @@ fi
 source "$METADATA"
 
 "$MESA_VENUS_VERIFIER" --android-root "$ANDROID_ROOT" \
-	--aosp-source "$AOSP_SOURCE"
-"$ACCESSIBILITY_VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect final
@@ -479,10 +469,6 @@ fi
 	fail "the script that moves an older guest to the on-screen keyboard default is absent"
 [[ "$PRODUCT_PACKAGES" == *" kernarium_oldapp "* ]] ||
 	fail "the shell command that lists and switches Old app compatibility is absent"
-[[ "$PRODUCT_PACKAGES" == *" kernarium_apps "* ]] ||
-	fail "the shell command that lists the launcher applications with their icons and starts one is absent"
-[[ "$PRODUCT_PACKAGES" == *" KernariumIcons "* ]] ||
-	fail "the application that draws the launcher applications' icons for that command is absent"
 [[ "$PRODUCT_PACKAGES" == *" com.android.hardware.wifi "* ]] ||
 	fail "the Wi-Fi HAL that the virtual Wi-Fi needs is absent"
 [[ "$PRODUCT_PACKAGES" == *" com.google.cf.wpa_supplicant "* ]] ||
@@ -491,12 +477,6 @@ fi
 	fail "the Wi-Fi overlay that turns MAC randomization off is absent"
 [[ "$PRODUCT_PACKAGES" == *" KernariumPinnerOverlay "* ]] ||
 	fail "the overlay that releases the home app's memory pin is absent"
-[[ "$PRODUCT_PACKAGES" == *" KernariumSms "* ]] ||
-	fail "the service that delivers the host's text messages is absent"
-[[ "$PRODUCT_PACKAGES" == *" messaging "* ]] ||
-	fail "the SMS application that shows the host's text messages is absent"
-[[ "$PRODUCT_PACKAGES" == *" TelephonyProvider "* ]] ||
-	fail "the provider that stores text messages is absent"
 [[ "$PRODUCT_PACKAGES" == *" SecureElement "* ]] ||
 	fail "the OMAPI service that SEService clients bind on demand is absent"
 for package in \
@@ -532,6 +512,7 @@ for package in \
 	QuickSearchBox \
 	TeleService \
 	Telecom \
+	TelephonyProvider \
 	com.android.compos \
 	com.android.hardware.authsecret \
 	com.android.hardware.graphics.composer.ranchu \
@@ -566,6 +547,7 @@ for package in \
 	CuttlefishWifiOverlay \
 	gsi_tool \
 	gsid \
+	messaging \
 	pmg_daemon \
 	snapshotctl \
 	snapuserd \
@@ -665,13 +647,6 @@ if ! cmp -s -- "$KERNEL_ELF" "$PRODUCT_OUT/kernel"; then
 	install -m 0755 -- "$KERNEL_ELF" "$PRODUCT_OUT/kernel"
 fi
 
-# The build reads the build number without depending on it: a property file
-# whose other inputs did not change would keep an earlier release's number.
-PRODUCT_OUT_ABSOLUTE=$AOSP_SOURCE/$PRODUCT_OUT
-if [[ -n "$BUILD_NUMBER_VALUE" ]]; then
-	remove_stale_build_properties "$OUT_DIR_ABSOLUTE" "$PRODUCT_OUT_ABSOLUTE" "$BUILD_NUMBER_VALUE"
-fi
-
 # publish-release.py consumes the packaged VINTF checker from this output, and
 # signs with sign_target_files_apks and the tools it runs, so a fresh output
 # builds those host tools.
@@ -698,9 +673,6 @@ else
 	mv -- "$FIRST_BOOT_OAT.new" "$FIRST_BOOT_OAT"
 	export LINEAGE24_FIRST_BOOT_OAT_MK=$FIRST_BOOT_OAT/first-boot-oat.mk
 	m -j"$JOBS" target-files-package
-fi
-if [[ -n "$BUILD_NUMBER_VALUE" ]]; then
-	verify_build_number_properties "$OUT_DIR_ABSOLUTE" "$PRODUCT_OUT_ABSOLUTE" "$BUILD_NUMBER_VALUE"
 fi
 DEXPREOPT_CONFIG="$OUT_DIR_ABSOLUTE/soong/dexpreopt-${LINEAGE24_PRODUCT}.config"
 verify_dexpreopt_config "$DEXPREOPT_CONFIG"

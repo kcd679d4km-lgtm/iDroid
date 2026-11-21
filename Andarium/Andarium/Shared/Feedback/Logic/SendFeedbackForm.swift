@@ -88,16 +88,6 @@ nonisolated struct SendFeedbackForm: Equatable, Sendable {
     /// that nobody has to tap it to learn that a field is still empty.
     var readyToSend: Bool { canSend && missing == nil }
 
-    /// Send, with both fields written, asks first: a bug report could be made
-    /// right now (`canMakeBugReport`: the virtual machine runs, the app can start
-    /// one, nothing else is under way) and none is attached. It asks on every
-    /// such tap. Where no bug report can be made (no virtual machine, a start
-    /// still under way, another task under the overlay) Send opens the mail as
-    /// ever: the sheet's card says what a bug report needs there.
-    var asksAboutBugReportOnSend: Bool {
-        canSend && missing == nil && !starting && canMakeBugReport
-    }
-
     /// Where a bug report would be, the way to one: only a running virtual
     /// machine can make it.
     var showsHowToReportBug: Bool { !running }

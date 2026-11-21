@@ -147,12 +147,10 @@ only the affected domain's `identity.env`.
 A change to an embedded artifact's inputs reaches users only through a rebuilt
 and accepted artifact. The Android release is selected by
 `android/lineage-24/metadata/accepted-release.env`, and a kernel bundle by
-`kernel/*/artifacts/accepted-*.env`, and the AOT artifact of the Android
-release by `android/lineage-24/metadata/accepted-aot.env`. Its inputs are the
-overlay, product configuration, support files and patch series, a kernel patch
-series and configuration, or the AOT tools and library list. Until an accepted
-artifact carries such a change, it is pending, and its hand-back names the
-artifact it waits for.
+`kernel/*/artifacts/accepted-*.env`. Its inputs are the overlay, product
+configuration, support files and patch series, or a kernel patch series and
+configuration. Until an accepted artifact carries such a change, it is
+pending, and its hand-back names the artifact it waits for.
 
 Before archiving a release build of an application:
 
@@ -252,10 +250,7 @@ below apply to each of them.
   - device, simulator, app-container and CoreDevice identifiers. Tests
     synthesize their own;
   - email addresses other than the configured Git identity, which commits
-    and exported patches carry (the one exception is the `From:` line of an
-    outside contributor's own patches under `dependencies/patches` or
-    `android/lineage-24/patches`, which `repository-environment-portability`
-    allows series by series);
+    and exported patches carry;
   - the Apple Team ID and signing identities. They belong in the ignored
     `GuestHost/Config/Signing.local.xcconfig`, from its tracked `.example`;
   - private network addresses and ssh endpoints;

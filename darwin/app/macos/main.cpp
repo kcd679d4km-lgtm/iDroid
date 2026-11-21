@@ -786,15 +786,6 @@ PreparedArguments prepare_host_arguments(
 				throw std::invalid_argument(
 					"--net-mac may be specified only once");
 			prepared.net_mac = *mac;
-		} else if (valued(uml::emulator::aot_release_prefix)) {
-			/* The identity of the booted release is a launcher's word to
-			 * the emulator, never a caller's. */
-			if (!configuration.states_aot_release)
-				throw std::invalid_argument(
-					"--aot-release is stated by the launcher of an "
-					"Android release from the release it boots; a "
-					"command line cannot name it");
-			prepared.kernel.push_back(text);
 		} else if (valued("--vsock-forward=")) {
 			std::string error;
 			auto forward = uml::vsock::parseForward(value, error);

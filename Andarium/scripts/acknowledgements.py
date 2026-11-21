@@ -11,21 +11,9 @@ network. Do not edit the resource by hand.
 
     acknowledgements.py             rewrite the resource from the sources
     acknowledgements.py --verify    fail if the resource differs from them
-        both take the AOT artifact (--aot-artifact), whose notices fill
-        "Translated system libraries"; without the option they read the
-        accepted artifact installed below .build/android/aot
     acknowledgements.py --coverage  fail if the application carries a
                                     framework or prefix library the resource
                                     does not acknowledge (needs no sources)
-
-Translated system libraries: the application carries machine code translated
-from the libraries of the Android image (UmlArm64Aot.framework). The notices
-of those libraries are the artifact's own `licences.json` (tools/aot), whose
-digest `artifact.json` records, so the generator verifies the artifact, takes
-each distinct notice once and lists them as the texts of one project that is
-shown only on the page of Android Open Source Project and only when the
-application embeds the framework (`parent`, `requires_framework`). The
-paragraph above the row is the application's own text.
 
 Coverage is measured against what the application embeds: the frameworks in
 Andarium/Andarium.xcodeproj and the components of the iOS device prefixes'
@@ -48,9 +36,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "tools/aot"))
-import release_artifact  # noqa: E402
-
 RESOURCE = ROOT / "Andarium/Andarium/Shared/Acknowledgements.json"
 PROJECT_FILE = ROOT / "Andarium/Andarium.xcodeproj/project.xcproj"
 PLATFORMS = ROOT / "dependencies/platforms"
@@ -61,11 +46,6 @@ DEVICE_CONTRACTS = (
     "ios-device-compression-arm64.tsv",
 )
 SCHEMA = 1
-AOT_FRAMEWORK = "UmlArm64Aot"
-TRANSLATED_ID = "aot-libraries"
-ACCEPTED_RELEASE = "android/lineage-24/metadata/accepted-release.env"
-INSTALLED_AOT = ".build/android/aot"
-TITLE_LENGTH = 80
 
 GROUPS = [
     {"id": "system", "title": "Operating system"},
@@ -197,61 +177,6 @@ def mit_template(texts: Texts, holders: str) -> str:
     return reflow(filled)
 
 
-# --- translated system libraries ---------------------------------------------
-
-
-def aot_artifact_directory(root: Path, named: Path | None) -> Path:
-    """The artifact whose notices the resource carries: the one named, else the
-    accepted one installed below .build/android/aot."""
-    if named is not None:
-        return named
-    descriptor = root / release_artifact.ACCEPTED_DESCRIPTOR
-    release = root / ACCEPTED_RELEASE
-    if descriptor.is_file() and release.is_file():
-        for line in release.read_text(encoding="utf-8").splitlines():
-            match = re.fullmatch(r"LINEAGE24_ACCEPTED_DIRECTORY_NAME='([^']+)'", line)
-            if match:
-                installed = root / INSTALLED_AOT / match.group(1)
-                if installed.is_dir():
-                    return installed
-                raise Problem(f"the accepted AOT artifact is not installed at {installed}; pass --aot-artifact")
-    raise Problem("no AOT artifact is accepted or installed; pass --aot-artifact")
-
-
-def notice_title(text: str) -> str:
-    """The first line that says something, to head one notice among thirty."""
-    for line in text.split("\n"):
-        words = " ".join(line.split())
-        if re.search(r"[A-Za-z0-9]", words):
-            return words if len(words) <= TITLE_LENGTH else words[: TITLE_LENGTH - 1].rstrip() + "\u2026"
-    raise Problem("a translated library's notice has no text")
-
-
-def translated_notices(artifact: Path) -> list[dict[str, str]]:
-    """The distinct notices the artifact's libraries state, each once, in a
-    fixed order. A notice appears under the identifier the image's NOTICE
-    gives it; where one identifier has texts that differ only in white space
-    (a partition's NOTICE and an APEX's), the first in sorted order stands."""
-    try:
-        release_artifact.verify(artifact, repo=ROOT, generator=False)
-        licences = json.loads((artifact / "licences.json").read_text(encoding="utf-8"))
-    except (release_artifact.ArtifactError, OSError, ValueError) as error:
-        raise Problem(f"{artifact} is not an AOT artifact: {error}") from error
-    texts: dict[str, set[str]] = {}
-    for library in licences["libraries"]:
-        for notice in library["notices"]:
-            texts.setdefault(notice["id"], set()).add(notice["text"])
-    if not texts:
-        raise Problem(f"{artifact}/licences.json states no notice")
-    notices = []
-    for identifier, variants in texts.items():
-        original = sorted(variants)[0]
-        text = original.replace("\r\n", "\n").replace("\r", "\n").expandtabs(8).strip("\n")
-        notices.append({"title": notice_title(text), "text": clean(text, text), "id": identifier})
-    notices.sort(key=lambda notice: (notice["title"].lower(), notice["id"]))
-    return [{"title": notice["title"], "text": notice["text"]} for notice in notices]
-
-
 # --- the table --------------------------------------------------------------
 
 
@@ -283,7 +208,7 @@ def shared_licenses(texts: Texts) -> dict[str, dict[str, str]]:
     }
 
 
-def projects(texts: Texts, notices: list[dict[str, str]]) -> list[dict]:
+def projects(texts: Texts) -> list[dict]:
     def own(title: str | None, source: str, relative: str, **options) -> dict[str, str]:
         text = clean(texts.read(source, relative, **options))
         return {"title": title, "text": text} if title else {"text": text}
@@ -301,19 +226,7 @@ def projects(texts: Texts, notices: list[dict[str, str]]) -> list[dict]:
             copyright="The Android Open Source Project",
             license="Apache License 2.0",
             spdx="Apache-2.0",
-            frameworks=["UmlArm64Aot"],
             licenses=["apache-2.0"],
-        ),
-        entry(
-            id=TRANSLATED_ID,
-            group="system",
-            parent="android",
-            requires_framework=AOT_FRAMEWORK,
-            name="Translated system libraries",
-            copyright="The Android Open Source Project and the authors of the libraries it includes",
-            license="Apache License 2.0, BSD, MIT, zlib and other licenses",
-            spdx="NOASSERTION",
-            texts=notices,
         ),
         entry(
             id="lineageos",
@@ -478,9 +391,9 @@ def projects(texts: Texts, notices: list[dict[str, str]]) -> list[dict]:
     ]
 
 
-def build(texts: Texts, notices: list[dict[str, str]]) -> dict:
+def build(texts: Texts) -> dict:
     shared = shared_licenses(texts)
-    table = projects(texts, notices)
+    table = projects(texts)
     used = {name for project in table for name in project["licenses"]}
     if used != set(shared):
         raise Problem(f"shared licenses {sorted(set(shared) ^ used)} are unused or missing")
@@ -541,17 +454,6 @@ def check_document(document: dict, frameworks: set[str], components: set[str]) -
                 problems.append(f"{name}: license text {ref!r} is missing")
         covered_frameworks.update(project.get("frameworks", []))
         covered_components.update(project.get("components", []))
-    identifiers = {project.get("id") for project in document.get("projects", [])}
-    for project in document.get("projects", []):
-        name = project.get("id", "?")
-        parent = project.get("parent")
-        if parent is not None and parent not in identifiers:
-            problems.append(f"{name}: parent {parent!r} is not a project")
-        required = project.get("requires_framework")
-        if required is not None and required not in frameworks:
-            problems.append(f"{name}: requires framework {required} that the application does not embed")
-        if required is not None and required not in covered_frameworks:
-            problems.append(f"{name}: requires framework {required} that no project acknowledges")
     for ref in sorted(set(licenses) - referenced):
         problems.append(f"license text {ref!r} is not used by any project")
     for framework in sorted(frameworks - covered_frameworks):
@@ -592,11 +494,6 @@ def main(argv: list[str] | None = None) -> int:
         help="prepared dependency sources (default: external/sources)",
     )
     parser.add_argument("--kernel-source", type=Path, help="Linux source (default: the configured replay)")
-    parser.add_argument(
-        "--aot-artifact",
-        type=Path,
-        help="the AOT artifact whose notices fill Translated system libraries (default: the accepted one installed)",
-    )
     parser.add_argument("--resource", type=Path, default=RESOURCE, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
@@ -607,7 +504,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"acknowledgements.py: {problem}", file=sys.stderr)
             return 1 if problems else 0
         texts = Texts(args.source_root, args.kernel_source or kernel_source_from(ROOT))
-        document = build(texts, translated_notices(aot_artifact_directory(ROOT, args.aot_artifact)))
+        document = build(texts)
         problems = check_document(document, embedded_frameworks(), device_components())
         if problems:
             for problem in problems:

@@ -36,8 +36,7 @@ target_include_directories(uml_published_figures INTERFACE
 set(UML_VIDEO_DECODER_SOURCES
     apple/video_decoder.mm
     apple/hevc_stream.cpp
-    apple/h264_stream.cpp
-    apple/vp9_stream.cpp)
+    apple/h264_stream.cpp)
 add_library(uml_video_decoder STATIC ${UML_VIDEO_DECODER_SOURCES})
 add_library(UML::VideoDecoder ALIAS uml_video_decoder)
 uml_declare_architecture_target(uml_video_decoder platform)
@@ -231,40 +230,6 @@ target_link_libraries(uml_host_thermal PRIVATE
     UML::PlatformContract)
 target_include_directories(uml_host_thermal PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
-
-# The system's network path: whether the host has one, and the event-driven
-# monitor that keeps it current (no polling; the system calls back on a change).
-# The product monitor calls the system's creation of a monitor directly. A
-# test variant publishes the private header that lets a test have the system
-# give none, and the product archive has no trace of it.
-function(_uml_add_host_network_path TARGET TESTING)
-    add_library(${TARGET} STATIC apple/host_network_path.mm)
-    uml_declare_architecture_target(${TARGET} platform)
-    target_include_directories(${TARGET} PUBLIC
-        ${PROJECT_SOURCE_DIR}/darwin)
-    if(TESTING)
-        target_include_directories(${TARGET} PUBLIC
-            ${CMAKE_CURRENT_SOURCE_DIR}/apple)
-        target_compile_definitions(${TARGET} PRIVATE
-            UML_HOST_NETWORK_PATH_TESTING=1)
-    else()
-        target_compile_definitions(${TARGET} PRIVATE
-            UML_HOST_NETWORK_PATH_TESTING=0)
-    endif()
-    target_link_libraries(${TARGET} PRIVATE
-        UML::PlatformContract
-        "-framework Foundation"
-        "-framework Network")
-endfunction()
-
-_uml_add_host_network_path(uml_host_network_path 0)
-add_library(UML::HostNetworkPath ALIAS uml_host_network_path)
-if(UML_BUILD_UNIT_TESTS OR UML_BUILD_TOOLING_TESTS OR
-   UML_BUILD_INTEGRATION_TESTS)
-    _uml_add_host_network_path(uml_host_network_path_test_variant 1)
-    add_library(UML::HostNetworkPathTestVariant ALIAS
-        uml_host_network_path_test_variant)
-endif()
 
 add_library(uml_guest_files OBJECT guest_files.cpp)
 add_library(UML::GuestFiles ALIAS uml_guest_files)

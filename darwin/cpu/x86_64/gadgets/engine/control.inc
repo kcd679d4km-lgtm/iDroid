@@ -384,6 +384,7 @@ gadget jump_linked
 	x86_memory_order_boundary
 	follow_block_link x8
 
+.purgem follow_block_link
 .purgem follow_indirect_link
 .purgem follow_target_link
 

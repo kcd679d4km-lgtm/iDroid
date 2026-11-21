@@ -6,10 +6,8 @@ import SwiftUI
 /// The words that the frame rate is lowered while the device is hot, over the
 /// top of the session, in the shape of the graphics notice: it takes touches
 /// only where it is drawn, and it goes when the person dismisses it or after
-/// `ThermalNotice.visibleFor`. The words, with a chevron, are a button that
-/// asks to turn the frame rate limit off (`ask`); Dismiss only dismisses.
+/// `ThermalNotice.visibleFor`.
 struct ThermalNoticeBanner: View {
-    let ask: () -> Void
     let dismiss: () -> Void
 
     var body: some View {
@@ -32,23 +30,9 @@ struct ThermalNoticeBanner: View {
                 .font(.title3)
                 .foregroundStyle(Color.orange)
                 .accessibilityHidden(true)
-            Button(action: ask) {
-                HStack(spacing: 6) {
-                    Text(ThermalNotice.text)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .fixedSize(horizontal: oneLine, vertical: true)
-                    Image(systemName: "chevron.right")
-                        .font(.footnote.weight(.bold))
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-                }
-                .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(Text(verbatim: ThermalNotice.text))
-            .accessibilityHint("Asks to turn off the frame rate limit")
-            .accessibilityIdentifier("thermal-notice-ask")
+            Text(ThermalNotice.text)
+                .font(.subheadline.weight(.semibold))
+                .fixedSize(horizontal: oneLine, vertical: true)
             Button(ThermalNotice.dismissLabel, action: dismiss)
                 .buttonStyle(.bordered)
                 .controlSize(.small)

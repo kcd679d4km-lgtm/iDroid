@@ -17,40 +17,39 @@ enum StartSpaceWords {
 
 /// What the screen over a guest paused for want of space says, as
 /// `SpacePause` says it in English: the figures and the stage are its, the
-/// sentences are one string each so a language can order them as it needs. A
-/// test asks for a language by `locale`.
+/// sentences are one string each so a language can order them as it needs.
 enum SpacePauseWords {
-    static func title(_ pause: SpacePause, locale: Locale = .current) -> String {
+    static func title(_ pause: SpacePause) -> String {
         let guest = pause.guest
         switch pause.stage {
-        case .pausing: return String(localized: LocalizedStringResource("Pausing \(guest)", locale: locale))
-        case .paused: return String(localized: LocalizedStringResource("\(guest) is paused", locale: locale))
-        case .notPaused: return String(localized: LocalizedStringResource("\(guest) is still running", locale: locale))
+        case .pausing: return String(localized: "Pausing \(guest)")
+        case .paused: return String(localized: "\(guest) is paused")
+        case .notPaused: return String(localized: "\(guest) is still running")
         }
     }
 
-    static func detail(_ pause: SpacePause, locale: Locale = .current) -> String {
+    static func detail(_ pause: SpacePause) -> String {
         // Shut down that only stops the run is Kernarium's.
         guard pause.ending == .powerOff else { return pause.detail }
         let guest = pause.guest
         let needed = Formats.size(bytes: RunSpace.resumeAtBytes)
         let free = Formats.size(bytes: pause.freeBytes)
         if pause.working == .shuttingDown {
-            return String(localized: LocalizedStringResource("\(guest) is saving what it has and shutting down.", locale: locale))
+            return String(localized: "\(guest) is saving what it has and shutting down.")
         }
         switch pause.stage {
         case .pausing:
-            return String(localized: LocalizedStringResource("This device has \(free) of free space left. \(guest) is saving what it has to storage.", locale: locale))
+            return String(localized: "This device has \(free) of free space left. \(guest) is saving what it has to storage.")
         case .paused:
             if pause.stillShort {
-                return String(localized: LocalizedStringResource("Only \(free) is free. Free up more space, then resume. \(guest) needs \(needed) free to continue.", locale: locale))
+                return String(localized: "Only \(free) is free. Free up more space, then resume. \(guest) needs \(needed) free to continue.")
             }
-            return String(localized: LocalizedStringResource("This device has \(free) of free space left, too little for \(guest) to keep writing. Free up space, then resume. \(guest) needs \(needed) free to continue.", locale: locale))
+            return String(localized: "This device has \(free) of free space left, too little for \(guest) to keep writing. Free up space, then resume. \(guest) needs \(needed) free to continue.")
         case .notPaused:
             if pause.stillShort {
-                return String(localized: LocalizedStringResource("Only \(free) is free, and \(guest) is still running. Shut it down before the space runs out, or free up more space and check again. \(guest) needs \(needed) free to continue.", locale: locale))
+                return String(localized: "Only \(free) is free, and \(guest) is still running. Shut it down before the space runs out, or free up more space and check again. \(guest) needs \(needed) free to continue.")
             }
-            return String(localized: LocalizedStringResource("This device has \(free) of free space left and \(guest) could not be paused. Shut it down before the space runs out, or free up space and check again.", locale: locale))
+            return String(localized: "This device has \(free) of free space left and \(guest) could not be paused. Shut it down before the space runs out, or free up space and check again.")
         }
     }
 

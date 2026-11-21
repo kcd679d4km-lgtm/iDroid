@@ -23,17 +23,14 @@ namespace uml::network {
 /* One reading. Every field counts events since the provider was made. */
 struct NetworkCounts final {
 	/* Queries the system resolver answered, a missing name (NXDOMAIN) and a
-	 * name with no record of the type (NODATA) included: both are answers,
-	 * except one given while the host has no network path, which the guest
-	 * is told is SERVFAIL and which counts as failed. */
+	 * name with no record of the type (NODATA) included: both are answers. */
 	std::uint64_t dns_answered{};
 	/* Queries the system refused the application (kDNSServiceErr_PolicyDenied
 	 * or _NotPermitted): the signal that iOS denies Andarium its network. */
 	std::uint64_t dns_policy_denied{};
 	/* Queries the system resolver had not answered by the deadline. */
 	std::uint64_t dns_timed_out{};
-	/* Queries that failed for any other reason, and the negative answers
-	 * given while the host has no network path. */
+	/* Queries that failed for any other reason. */
 	std::uint64_t dns_failed{};
 	/* The guest's DHCPDISCOVER and DHCPREQUEST messages, and the DHCPACK
 	 * messages that answered them. */

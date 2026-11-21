@@ -454,13 +454,8 @@ class StartingCommandTests(unittest.TestCase):
                 with self.subTest(command=command, bundle=bundle):
                     self.order.clear()
                     arguments = (["--bundle", bundle] if bundle else [])
-                    # A stopped Andarium is activated only by a run that tests
-                    # haptics (test_ipad_automation_launch.py).
-                    tests_haptics = (
-                        ["--haptics"] if command == "activate"
-                        and bundle == "com.imxieyi.andarium" else [])
                     self.assertEqual(
-                        self.run_command(*arguments, command, *tests_haptics), 0)
+                        self.run_command(*arguments, command), 0)
                     self.assertEqual(self.order, [f"reports:{process}", "send"])
 
     def test_the_other_operations_need_no_report_check(self) -> None:

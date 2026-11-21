@@ -90,9 +90,7 @@ share:
   address space's arena, tagged by the id the cache gives each resident address
   space, so retiring an address space drops its state as a unit. Slot geometry
   is one build-time setting for both ISAs
-  (`cpu/gadget_cache_geometry.hpp`). A key with no compact tag form (an address
-  at or above the guest address limit) is built unlinked, run once and never
-  stored, so it leaves no link record or indirect site in its space.
+  (`cpu/gadget_cache_geometry.hpp`).
 - **Shared bodies.** Executors running one address space share its bodies, link
   records and indirect sites unless `DARWIN_UML_GADGET_SHARED_BODIES=0`; a code
   change one vCPU publishes reaches the others at their next block transition.
@@ -127,20 +125,11 @@ share:
   `--gadget-cache-budget=`; it is also the gadget-cache term of the host GPU's
   budget
   ([architecture](../docs/architecture.md#memory-and-executable-code)).
-- **Code writes.** In both arm64 engines, code another vCPU or another process
-  changed and synchronized takes effect at this vCPU's next context
-  synchronization point, including through a shared frame under another
-  address space: a per-frame holder word on the mapped backing names the
-  address spaces that fetched the frame, and the synchronization (or a
-  `ptrace` or `process_vm_writev()` write, which names the frame it wrote)
-  publishes to them
-  ([architecture](../docs/architecture.md#translation-caches-and-guest-debugging)).
-  A kernel write into a guest-code page by `uaccess` reaches arm64 code only
-  through the guest's own `IC IVAU` or `cacheflush()`, as on hardware that
-  advertises neither DIC nor IDC; x86 code sees such a write into a page-cache
-  frame, which the x86_64 kernel names to the host
-  (`flush_dcache_folio()`). `DARWIN_UML_CODE_HOLDER_COUNTERS=<path>`
-  writes the mechanism's counters once a second.
+- **Code writes.** In both arm64 engines, code another vCPU changed and
+  synchronized takes effect at this vCPU's next context synchronization point.
+  A kernel write into a guest-code page reaches arm64 code only through the
+  guest's own `IC IVAU` or `cacheflush()`, as on hardware that advertises
+  neither DIC nor IDC.
 - **Forwarding and diagnostics.** Scalar and vector result forwarding are
   template-owned and can be disabled per program through `BuildOptions`.
   `UML_GADGET_EXECUTION_HISTOGRAM` is a default-off diagnostic build whose
@@ -185,26 +174,7 @@ patches provide the behaviors the `slirp-network-*` tests check.
   resolver, and SLiRP's own DNS proxy is off: the proxy would send queries from
   the application to a local-network router, which needs the Local Network
   permission, and the guest follows the device's own resolver configuration.
-  The wire rules are `network-dns-rules`. While the host has no network path
-  (the platform's path monitor, which the provider makes at its first open,
-  keeps for its life and makes again at an open if the system gave it none), a
-  name the system cannot find is answered SERVFAIL, which a guest retries, and
-  counted as failed; answers that carry a record of the asked type stand, and
-  the next report of a path ends it (`slirp-network-dns`,
-  `platform-host-network-path`).
-- When the path monitor reports that an interface carries the path and the
-  host no longer has the address a guest TCP connection's host socket is bound
-  to (Wi-Fi gone, the path on cellular), the guest gets a reset on exactly
-  those connections once an interface has carried the path for 8 s since the
-  host's addresses last changed (a report with a changed address set starts
-  the 8 s over) and the address was missing at both ends of that time;
-  otherwise a connection the guest writes on hangs until the host stack gives
-  up, and one only the peer writes on never ends. An outage no interface
-  carries resets nothing and starts the 8 s over once the path is back; an
-  address first found missing when they end gets 8 s of its own. An address
-  that returns, host forwards, UDP, DNS and ICMP are left alone, and the hold
-  of a pending report is the only timer (`slirp-network-address-reset`,
-  `network-address-reset-rules`).
+  The wire rules are `network-dns-rules`.
 - The provider counts what became of the guest's DNS queries (answered, policy
   denied, timed out, failed), its DHCP exchange and its TCP connection attempts,
   as numbers only, and the runtime writes them into the session record

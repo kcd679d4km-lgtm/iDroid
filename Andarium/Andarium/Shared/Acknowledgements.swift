@@ -53,16 +53,6 @@ nonisolated struct Acknowledgements: Decodable, Sendable {
         /// Identifiers into `Acknowledgements.licenses`.
         let licenses: [String]
         let texts: [Notice]
-        /// The project whose page opens this one, which the list of projects
-        /// then leaves out: its notices belong to what that project covers.
-        let parent: String?
-        /// The framework the app must embed for this project to be shown.
-        let requiresFramework: String?
-
-        private enum CodingKeys: String, CodingKey {
-            case id, group, name, copyright, license, spdx, licenses, texts, parent
-            case requiresFramework = "requires_framework"
-        }
 
         static func == (lhs: Project, rhs: Project) -> Bool { lhs.id == rhs.id }
         func hash(into hasher: inout Hasher) { hasher.combine(id) }
@@ -79,32 +69,8 @@ nonisolated struct Acknowledgements: Decodable, Sendable {
     let licenses: [String: License]
     let projects: [Project]
 
-    /// The framework that holds the machine code translated from the Android
-    /// system's libraries.
-    static let aotFramework = "UmlArm64Aot"
-
-    /// Whether the app in `bundle` embeds `framework`.
-    static func carries(_ framework: String, in bundle: Bundle = .main) -> Bool {
-        guard let frameworks = bundle.privateFrameworksURL else { return false }
-        return FileManager.default.fileExists(
-            atPath: frameworks.appendingPathComponent("\(framework).framework").path)
-    }
-
-    /// Whether this build shows a project: one that needs a framework is shown
-    /// only by an app that embeds it.
-    func isShown(_ project: Project, in bundle: Bundle = .main) -> Bool {
-        guard let framework = project.requiresFramework else { return true }
-        return Self.carries(framework, in: bundle)
-    }
-
-    /// The projects the list shows under a group: those a page does not open.
-    func projects(in group: Group, in bundle: Bundle = .main) -> [Project] {
-        projects.filter { $0.group == group.id && $0.parent == nil && isShown($0, in: bundle) }
-    }
-
-    /// The projects a project's own page opens, in the resource's order.
-    func children(of project: Project, in bundle: Bundle = .main) -> [Project] {
-        projects.filter { $0.parent == project.id && isShown($0, in: bundle) }
+    func projects(in group: Group) -> [Project] {
+        projects.filter { $0.group == group.id }
     }
 
     func project(_ id: String) -> Project? {
@@ -158,28 +124,6 @@ extension Acknowledgements.Group {
     }
 }
 
-extension Acknowledgements.Project {
-    /// The name in the person's language. The JSON's own is English and stays
-    /// for a project this build has no translation for.
-    var displayName: String {
-        switch id {
-        case "aot-libraries":
-            String(localized: "Translated system libraries", comment: "Title of the page of notices, and of the row that opens it, for the Android system libraries that Andarium translates to machine code ahead of time.")
-        default: name
-        }
-    }
-
-    /// The paragraph a parent's page puts before the row that opens this
-    /// project.
-    var introduction: String? {
-        switch id {
-        case "aot-libraries":
-            String(localized: "Andarium contains machine code translated from the libraries of the Android system it runs, so that those libraries start and run faster. The translated code is derived from the original libraries and stays under their licences: Apache License 2.0 for the Android Open Source Project and LineageOS, and the BSD, MIT, zlib and other licences of the libraries they include. Every notice that applies to a translated library is listed under Translated system libraries.", comment: "Paragraph on the Android Open Source Project page of Acknowledgements about the translated system libraries. The last words are the title of the row below it, Translated system libraries.")
-        default: nil
-        }
-    }
-}
-
 /// The list of projects, grouped, ending with the line about names and marks.
 struct AcknowledgementsView: View {
     private let acknowledgements = Acknowledgements.bundled
@@ -222,17 +166,13 @@ struct LicenseView: View {
 
     var body: some View {
         ScrollView {
-            if let project = acknowledgements.project(projectID), acknowledgements.isShown(project) {
+            if let project = acknowledgements.project(projectID) {
                 VStack(alignment: .leading, spacing: 22) {
                     summary(project)
-                    ForEach(acknowledgements.children(of: project)) { child in
-                        translated(child)
-                    }
                     ForEach(acknowledgements.blocks(of: project)) { block in
                         VStack(alignment: .leading, spacing: 10) {
                             if let title = block.title {
                                 Text(title).font(.headline)
-                                    .accessibilityAddTraits(.isHeader)
                             }
                             ForEach(Array(paragraphs(block.text).enumerated()), id: \.offset) { _, paragraph in
                                 Text(verbatim: paragraph)
@@ -251,7 +191,7 @@ struct LicenseView: View {
             }
         }
         .background(Color(.systemGroupedBackground))
-        .navigationTitle(acknowledgements.project(projectID)?.displayName ?? String(localized: "License"))
+        .navigationTitle(acknowledgements.project(projectID)?.name ?? String(localized: "License"))
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -265,32 +205,6 @@ struct LicenseView: View {
         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 20))
     }
 
-    /// What a project covers that has notices of its own: a paragraph and the
-    /// row that opens them.
-    private func translated(_ child: Acknowledgements.Project) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let introduction = child.introduction {
-                Text(introduction)
-                    .font(.footnote)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            NavigationLink(value: InfoPage.license(child.id)) {
-                HStack {
-                    Text(child.displayName)
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                        .accessibilityHidden(true)
-                }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 20))
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
     private func field(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
@@ -299,7 +213,6 @@ struct LicenseView: View {
             Text(value)
                 .font(.subheadline)
         }
-        .accessibilityElement(children: .combine)
     }
 
     private func paragraphs(_ text: String) -> [String] {

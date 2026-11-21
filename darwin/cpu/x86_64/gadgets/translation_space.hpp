@@ -352,8 +352,7 @@ public:
 	void note_store(std::uint64_t address, std::size_t size);
 	/* Answer a code change published up to `changes`: before any executor
 	 * runs the address space at `changes`, the records of the bodies the
-	 * change covers are reset, every one when `reader` cannot describe it or
-	 * the change is the whole space (a range of length 0). */
+	 * change covers are reset, every one when `reader` cannot describe it. */
 	void observe(std::uint64_t changes, ProgramCacheCodeChangeReader reader,
 		void *context);
 	/* The executor that published the changes up to `changes` itself has

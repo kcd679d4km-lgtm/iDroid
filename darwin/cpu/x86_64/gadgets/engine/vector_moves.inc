@@ -7,7 +7,8 @@ gadget vector_move_\width\()_mr
 	mov x25, x7
 	and x8, x23, #0xffff
 	\load \host_register\()24, [_vcpu, x8]
-	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8), cross=Lx86_vector_scalar_store_cross\@
+	page_cross_check (\width / 8), Lx86_vector_scalar_store_cross\@
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	.if \width == 32
 	str w24, [x7]
 	.else
@@ -27,7 +28,8 @@ vector_scalar_store 64, ldr, x
 gadget vector_move_64_128_rm
 	effective_address
 	mov x25, x7
-	translate 0, UML_X86_64_TLB_READ_PAGE, 8, cross=Lx86_vector_move_64_128_cross
+	page_cross_check 8, Lx86_vector_move_64_128_cross
+	translate 0, UML_X86_64_TLB_READ_PAGE, 8
 	ldr d0, [x7]
 	b Lx86_vector_move_64_128_write
 Lx86_vector_move_64_128_cross:
@@ -42,7 +44,8 @@ Lx86_vector_move_64_128_write:
 gadget vector_move_64_128_rm_vex
 	effective_address
 	mov x25, x7
-	translate 0, UML_X86_64_TLB_READ_PAGE, 8, cross=Lx86_vector_move_64_128_vex_cross
+	page_cross_check 8, Lx86_vector_move_64_128_vex_cross
+	translate 0, UML_X86_64_TLB_READ_PAGE, 8
 	ldr d0, [x7]
 	b Lx86_vector_move_64_128_vex_write
 Lx86_vector_move_64_128_vex_cross:

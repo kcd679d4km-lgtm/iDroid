@@ -13,9 +13,7 @@ text is the key. The strings live in:
   Andarium/Localization/Feedback.xcstrings      the texts of Send feedback (table "Feedback"), carried by the builds that have it only
   Andarium/Localization/TipJar.xcstrings        the texts of Buy me tokens (table "TipJar"), carried by the builds that have it only
   Andarium/Localization/Review.xcstrings        the text of Review on the App Store (table "Review"), carried by the builds that have it only
-  Andarium/Localization/StoreLink.xcstrings     the texts of the App Store notice (table "StoreLink"), carried by the TestFlight builds that have it only
   Andarium/Localization/FollowX.xcstrings       the text of Follow developer on X (table "FollowX"), carried by the builds that have it only
-  Andarium/Localization/AppShortcuts.xcstrings  the phrases Siri and Search understand for Add to Home Screen (table "AppShortcuts")
   Andarium/AndariumCore/Sources/AndariumCore/Resources/Localizable.xcstrings
                                                 the words the model says
 
@@ -71,9 +69,7 @@ check needs a build that has them (the four `TIP_` settings and
 extracted no string of the table; an App Store build without the feature does
 not compare its catalog. Follow developer on X
 (Andarium/README.md#follow-developer-on-x) is the same with its FollowX table
-and `FOLLOW_X_HANDLE=example_handle`, and the App Store notice of TestFlight
-builds (Andarium/README.md#app-store-notice) with its StoreLink table and
-`STORE_LINK_ID=id0000000000`.
+and `FOLLOW_X_HANDLE=example_handle`.
 """
 
 from __future__ import annotations
@@ -109,9 +105,7 @@ CATALOGS = {
     "Feedback": "Andarium/Localization/Feedback.xcstrings",
     "TipJar": "Andarium/Localization/TipJar.xcstrings",
     "Review": "Andarium/Localization/Review.xcstrings",
-    "StoreLink": "Andarium/Localization/StoreLink.xcstrings",
     "FollowX": "Andarium/Localization/FollowX.xcstrings",
-    "AppShortcuts": "Andarium/Localization/AppShortcuts.xcstrings",
     "AndariumCore": CORE_CATALOG,
 }
 ENGLISH_ONLY = "Andarium/Localization/english-only.json"
@@ -127,7 +121,6 @@ FEATURE_TABLES = {
     "Feedback": "FEEDBACK_ADDRESS=feedback@example.com to compile Send feedback in",
     "TipJar": "TIP_LITE, TIP_PRO, TIP_MAX and TIP_ULTRA (com.example.andarium.tip.lite and so on) to compile Buy me tokens in",
     "Review": "REVIEW_ID=id0000000000 to compile Review on the App Store in",
-    "StoreLink": "STORE_LINK_ID=id0000000000 to compile the App Store notice in",
     "FollowX": "FOLLOW_X_HANDLE=example_handle to compile Follow developer on X in",
 }
 
@@ -138,9 +131,7 @@ SYNC_SOURCES = {
     "Feedback": ("Andarium/Andarium/",),
     "TipJar": ("Andarium/Andarium/",),
     "Review": ("Andarium/Andarium/",),
-    "StoreLink": ("Andarium/Andarium/",),
     "FollowX": ("Andarium/Andarium/",),
-    "AppShortcuts": ("Andarium/Andarium/",),
     "AndariumCore": ("Andarium/AndariumCore/Sources/AndariumCore/",),
 }
 
@@ -250,10 +241,6 @@ def leaves(localization: dict, path: str = ""):
     """Every string unit of one language's localization: (where, unit, plural category or None)."""
     if "stringUnit" in localization:
         yield path, localization["stringUnit"], None
-    # An App Shortcut's phrases: one unit for each, in the state of the set.
-    string_set = localization.get("stringSet", {})
-    for index, value in enumerate(string_set.get("values", []), start=1):
-        yield f"/phrase {index}", {"state": string_set.get("state"), "value": value}, None
     for name, substitution in localization.get("substitutions", {}).items():
         yield from leaves(substitution, f"{path}/substitution {name}")
     for kind, cases in localization.get("variations", {}).items():

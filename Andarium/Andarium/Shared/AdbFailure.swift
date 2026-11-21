@@ -9,8 +9,6 @@ nonisolated enum AdbActivity {
     case bugReport
     /// Browsing the guest's files, importing and exporting.
     case files
-    /// Turning Android’s screen reader on or off.
-    case screenReader
 
     /// Each sentence is whole for each activity, so a language is free to
     /// order the words of the activity as it needs.
@@ -19,7 +17,6 @@ nonisolated enum AdbActivity {
         case .installApp: String(localized: "The virtual machine isn\u{2019}t ready to install apps. Try again in a moment.")
         case .bugReport: String(localized: "The virtual machine isn\u{2019}t ready to make a bug report. Try again in a moment.")
         case .files: String(localized: "The virtual machine isn\u{2019}t ready to open its files. Try again in a moment.")
-        case .screenReader: String(localized: "The virtual machine isn\u{2019}t ready to change Android\u{2019}s screen reader. Try again in a moment.")
         }
     }
 
@@ -31,8 +28,6 @@ nonisolated enum AdbActivity {
             String(localized: "The virtual machine\u{2019}s debugging service restarted before the bug report was finished. Try again.")
         case .files:
             String(localized: "The virtual machine\u{2019}s debugging service restarted before the transfer finished. Try again.")
-        case .screenReader:
-            String(localized: "The virtual machine\u{2019}s debugging service restarted before Android\u{2019}s screen reader changed. Try again.")
         }
     }
 
@@ -41,7 +36,6 @@ nonisolated enum AdbActivity {
         case .installApp: String(localized: "The virtual machine stopped responding while installing the app.")
         case .bugReport: String(localized: "The virtual machine stopped responding while making the bug report.")
         case .files: String(localized: "The virtual machine stopped responding while copying the files.")
-        case .screenReader: String(localized: "The virtual machine stopped responding while changing Android\u{2019}s screen reader.")
         }
     }
 
@@ -50,7 +44,6 @@ nonisolated enum AdbActivity {
         case .installApp: String(localized: "The virtual machine couldn\u{2019}t install the app.")
         case .bugReport: String(localized: "The virtual machine couldn\u{2019}t make the bug report.")
         case .files: String(localized: "The virtual machine couldn\u{2019}t copy the file.")
-        case .screenReader: String(localized: "The virtual machine couldn\u{2019}t change Android\u{2019}s screen reader.")
         }
     }
 }

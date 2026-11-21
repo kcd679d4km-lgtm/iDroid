@@ -12,14 +12,6 @@
  * probe's checks.
  *
  * probe_end closes _start and emits the success message.
- *
- * A probe enters its measured loop with a jump from the setup and leaves it
- * with a jump to the result check, even where the jump's target is the next
- * instruction, and assembles the data the loop reads rather than filling it
- * at run time. The engine ends a block at a jump and places each block's
- * stream behind those translated before it, so only the setup's blocks lie
- * in front of the loop's, and none of them holds the loop, the check or the
- * exit.
  */
 
 #define X86_64_PROBE_NR_WRITE 1

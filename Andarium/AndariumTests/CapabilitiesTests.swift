@@ -2,7 +2,6 @@
 import AndariumCore
 import AndariumCoreTestSupport
 import Foundation
-import SwiftUI
 import Testing
 import UIKit
 @testable import Andarium
@@ -272,57 +271,6 @@ struct CapabilitiesFlowTests {
         // The other switches were never touched.
         #expect(s.model.guest?.location == false && s.model.guest?.microphone == false)
     }
-
-    #if !APP_STORE
-    /// A harness launch that silences haptics runs as if the switch were off:
-    /// the device plays nothing, and the person's choice, as shown and as
-    /// stored, is not touched, whether the switch is turned meanwhile or not.
-    @Test func aLaunchThatSilencesHapticsPlaysNoneAndKeepsTheChoice() {
-        let s = setup()
-        s.model.hapticsAvailable = true
-        #expect(s.model.hapticsPlays)
-        s.model.hapticsSilencedByLaunch = true
-        #expect(!s.model.hapticsPlays)
-        #expect(s.model.hapticsOn)
-        #expect(s.model.guest?.haptics == true)
-        // Turning the switch on changes nothing for this launch ...
-        s.model.setHaptics(true)
-        #expect(!s.model.hapticsPlays)
-        #expect(s.driver.savedGuest?.haptics == true)
-        // ... and off is kept as the person chose it.
-        s.model.setHaptics(false)
-        #expect(!s.model.hapticsOn && !s.model.hapticsPlays)
-        #expect(s.driver.savedGuest?.haptics == false)
-        // The guest still has its vibrator: the boot request is the device's.
-        #expect(LiveRuntime.hostFeatures(hapticsAvailable: true) == UInt32(KERNARIUM_RUNTIME_ANDROID_HOST_HAPTICS))
-        s.model.hapticsSilencedByLaunch = false
-        s.model.setHaptics(true)
-        #expect(s.model.hapticsPlays)
-    }
-
-    /// The application's own touch feedback (the side keys' click, the rulers'
-    /// tick) is not the guest's vibrator's, so the Haptics switch does not
-    /// govern it; a launch that silences haptics does, because the taps and
-    /// drags of an automated run reach it.
-    @Test func aLaunchThatSilencesHapticsSilencesTheInterfaceFeedbackToo() {
-        let s = setup()
-        #expect(s.model.interfaceFeedbackPlays)
-        #expect(InterfaceFeedback.playing(.selection, in: s.model) == .selection)
-        s.model.setHaptics(false)
-        #expect(!s.model.hapticsOn)
-        #expect(s.model.interfaceFeedbackPlays)
-        #expect(InterfaceFeedback.playing(.impact(weight: .light), in: s.model) == .impact(weight: .light))
-        s.model.hapticsSilencedByLaunch = true
-        #expect(!s.model.interfaceFeedbackPlays)
-        #expect(InterfaceFeedback.playing(.selection, in: s.model) == nil)
-        #expect(InterfaceFeedback.playing(.impact(weight: .light), in: s.model) == nil)
-        // The person's choice is still the person's.
-        s.model.setHaptics(true)
-        #expect(s.model.hapticsOn && s.driver.savedGuest?.haptics == true)
-        // A view with no model (a preview) plays as it always did.
-        #expect(InterfaceFeedback.playing(.selection, in: nil) == .selection)
-    }
-    #endif
 
     @Test func aGuestStoredBeforeTheSwitchReadsAsOn() throws {
         let old = Data(#"{"cores":2,"memoryMiB":1024,"capacityGiB":8,"microphone":false,"includeInBackups":false}"#.utf8)

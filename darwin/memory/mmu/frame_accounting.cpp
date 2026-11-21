@@ -163,7 +163,6 @@ std::atomic_uint64_t publications{};
 std::atomic_uint64_t unresolved_writes{};
 std::atomic_uint64_t direct_range_drops{};
 std::atomic_uint64_t global_holds{};
-std::atomic_uint64_t kernel_frame_writes{};
 
 /* The source of every flush serial. The 64-bit value moves once per walk of
  * a generation, and once for each state made; at a million moves a second it
@@ -569,8 +568,7 @@ FrameAccounting::Diagnostics FrameAccounting::diagnostics() noexcept
 		publications.load(std::memory_order_relaxed),
 		unresolved_writes.load(std::memory_order_relaxed),
 		direct_range_drops.load(std::memory_order_relaxed),
-		global_holds.load(std::memory_order_relaxed),
-		kernel_frame_writes.load(std::memory_order_relaxed)};
+		global_holds.load(std::memory_order_relaxed)};
 }
 
 void FrameAccounting::note_nonempty_state_destruction() noexcept
@@ -642,11 +640,8 @@ FrameAccounting::HoldReport FrameAccounting::hold(GenerationState &state,
 	const auto offset = frame.offset;
 	MappedBacking::FrameRecord *record = nullptr;
 	try {
-		/* Found before the stripe lock: the record exists from the frame's
-		 * first executable mapping, and this allocates nothing. It is null
-		 * only for a backing with no slot for the frame in its record
-		 * index, which cannot name the frame's holders; the registration
-		 * fails, as it does for a frame it cannot track. */
+		/* Made before the stripe lock; null when the backing has no record
+		 * index or memory ran out. */
 		record = backing.frame_record(offset);
 	} catch (...) {
 	}
@@ -1105,11 +1100,6 @@ bool FrameAccounting::resolve_direct(const void *address, int &fd,
 void FrameAccounting::note_unresolved_kernel_write() noexcept
 {
 	unresolved_writes.fetch_add(1, std::memory_order_relaxed);
-}
-
-void FrameAccounting::note_kernel_frame_write() noexcept
-{
-	kernel_frame_writes.fetch_add(1, std::memory_order_relaxed);
 }
 
 #if UML_MEMORY_ALLOCATION_TESTING

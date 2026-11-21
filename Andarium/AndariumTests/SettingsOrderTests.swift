@@ -8,8 +8,8 @@ import UIKit
 @testable import Andarium
 
 /// The session's Settings starts with what a new person came for: Install APK
-/// and the file browser, in that order, above the statistics, Performance, the
-/// developer options and the diagnostics. Each keeps its own condition; what is not
+/// and the file browser, in that order, above the statistics, the developer
+/// options and the diagnostics. Each keeps its own condition; what is not
 /// offered leaves the view starting with what comes next.
 @MainActor
 @Suite(.serialized)
@@ -24,7 +24,6 @@ struct SettingsOrderTests {
         case install = "Install APK"
         case files = "Internal storage"
         case stats = "CPU"
-        case performance = "When hot"
         case developer = "ADB over network"
         case diagnostics = "Create bug report"
     }
@@ -47,29 +46,9 @@ struct SettingsOrderTests {
         return model
     }
 
-    /// An accessibility element as Settings draws it.
-    private typealias Element = (label: String, value: String?, frame: CGRect, button: Bool)
-
-    private static func elements(in root: UIView) -> [Element] {
-        var found: [Element] = []
-        var seen = Set<ObjectIdentifier>()
-        func walk(_ node: NSObject, depth: Int) {
-            guard depth < 64, seen.insert(ObjectIdentifier(node)).inserted else { return }
-            if let label = node.accessibilityLabel, !label.isEmpty {
-                found.append((label, node.accessibilityValue, node.accessibilityFrame, node.accessibilityTraits.contains(.button)))
-            }
-            var children = (node.accessibilityElements ?? []).compactMap { $0 as? NSObject }
-            if let view = node as? UIView { children += view.subviews }
-            for child in children { walk(child, depth: depth + 1) }
-        }
-        walk(root, depth: 0)
-        return found
-    }
-
-    /// What Settings draws once it has settled, in a view tall enough to draw
-    /// every section: each accessibility element with its label, frame and
-    /// whether it is a button, top to bottom.
-    private func settled(of model: AppModel) async throws -> [Element] {
+    /// The rows Settings draws, top to bottom, in a view tall enough to draw
+    /// every section.
+    private func rows(of model: AppModel) async throws -> [Row] {
         let lease = try await HostWindow.take()
         defer { lease.give() }
         let container = UIViewController()
@@ -84,50 +63,45 @@ struct SettingsOrderTests {
             settings.view.removeFromSuperview()
             settings.removeFromParent()
         }
-        var found: [Element] = []
+        var found: [Row] = []
         var steady = 0
         let deadline = ContinuousClock.now + .seconds(10)
         while ContinuousClock.now < deadline, steady < 4 {
             try await Task.sleep(for: .milliseconds(250))
             settings.view.setNeedsLayout()
             settings.view.layoutIfNeeded()
-            let elements = Self.elements(in: settings.view).sorted { $0.frame.minY < $1.frame.minY }
-            // The view has settled when it draws the same elements four times running.
-            steady = !elements.isEmpty && elements.map(\.label) == found.map(\.label) ? steady + 1 : 0
-            found = elements
-        }
-        return found
-    }
-
-    /// The rows Settings draws, top to bottom.
-    private func rows(of model: AppModel) async throws -> [Row] {
-        var found: [Row] = []
-        for element in try await settled(of: model) {
-            guard let row = Row.allCases.first(where: { element.label.contains($0.rawValue) }), !found.contains(row)
-            else { continue }
-            found.append(row)
+            let elements = SideKeysTouchTests.elements(in: settings.view).sorted { $0.frame.minY < $1.frame.minY }
+            var now: [Row] = []
+            for element in elements {
+                guard let row = Row.allCases.first(where: { element.label.contains($0.rawValue) }), !now.contains(row)
+                else { continue }
+                now.append(row)
+            }
+            // The view has settled when it draws the same rows four times running.
+            steady = !now.isEmpty && now == found ? steady + 1 : 0
+            found = now
         }
         return found
     }
 
     @Test func installApkAndTheFileBrowserComeFirstInThatOrder() async throws {
         let order = try await rows(of: model())
-        #expect(order == [.install, .files, .stats, .performance, .developer, .diagnostics], "Settings draws \(order)")
+        #expect(order == [.install, .files, .stats, .developer, .diagnostics], "Settings draws \(order)")
     }
 
     @Test func theViewStartsWithWhatIsOfferedWhenASectionIsNot() async throws {
         var noInstall = Capabilities.device
         noInstall.apkInstall = false
-        #expect(try await rows(of: model(capabilities: noInstall)) == [.files, .stats, .performance, .developer, .diagnostics])
+        #expect(try await rows(of: model(capabilities: noInstall)) == [.files, .stats, .developer, .diagnostics])
         var noFiles = Capabilities.device
         noFiles.guestFiles = false
-        #expect(try await rows(of: model(capabilities: noFiles)) == [.install, .stats, .performance, .developer, .diagnostics])
+        #expect(try await rows(of: model(capabilities: noFiles)) == [.install, .stats, .developer, .diagnostics])
         // No browser available: the file browser's section is not drawn.
-        #expect(try await rows(of: model(browser: false)) == [.install, .stats, .performance, .developer, .diagnostics])
+        #expect(try await rows(of: model(browser: false)) == [.install, .stats, .developer, .diagnostics])
         var neither = Capabilities.device
         neither.apkInstall = false
         neither.guestFiles = false
-        #expect(try await rows(of: model(capabilities: neither)) == [.stats, .performance, .developer, .diagnostics])
+        #expect(try await rows(of: model(capabilities: neither)) == [.stats, .developer, .diagnostics])
     }
 
     /// Recovery runs no adb: neither section, nor the developer options and
@@ -135,57 +109,5 @@ struct SettingsOrderTests {
     @Test func recoveryOffersNoneOfThem() async throws {
         let order = try await rows(of: model(mode: .recovery))
         #expect(order == [.stats], "Settings draws \(order)")
-    }
-
-    // MARK: Performance
-
-    private let cools = "While this device is hot, games run at a lower frame rate so it can cool down."
-    private let warning =
-        "This device gets hotter and the battery drains faster. iOS may dim the screen, slow everything down or close Andarium."
-    private let hotLimited = "This device is hot. The frame rate is limited until it cools."
-    private let hotUnlimited = "This device is hot. The frame rate is not limited."
-
-    /// The footnote of Performance in its four states, in the English the
-    /// suite runs in: what the limit does while it is on, the warning while it
-    /// is off, and while the device is held hot (the heat is stated to the
-    /// model, no device is heated) what is happening to the frame rate.
-    @Test func theFootnoteSaysWhatTheLimitDoesAndWarnsWhileItIsOff() async throws {
-        let on = model()
-        let limited = try await settled(of: on).map(\.label)
-        #expect(limited.contains(cools), "limit on: \(limited)")
-        #expect(!limited.contains(warning))
-
-        let off = model()
-        off.setHeatLimit(false)
-        let unlimited = try await settled(of: off).map(\.label)
-        #expect(unlimited.contains(warning), "limit off: \(unlimited)")
-        #expect(!unlimited.contains(cools))
-    }
-
-    @Test func whileTheDeviceIsHeldHotTheFootnoteSaysWhatTheFrameRateIs() async throws {
-        let on = model()
-        on.deviceHeatChanged(hot: true)
-        let limited = try await settled(of: on).map(\.label)
-        #expect(limited.contains(hotLimited), "hot, limit on: \(limited)")
-        #expect(!limited.contains(cools) && !limited.contains(warning))
-
-        let off = model()
-        off.setHeatLimit(false)
-        off.deviceHeatChanged(hot: true)
-        let unlimited = try await settled(of: off).map(\.label)
-        #expect(unlimited.contains(hotUnlimited), "hot, limit off: \(unlimited)")
-        #expect(unlimited.contains(warning), "the warning stays while the limit is off and the device is hot")
-        #expect(!unlimited.contains(hotLimited))
-    }
-
-    @Test func theRowReadsItsNameAndItsValueAndFollowsTheChoice() async throws {
-        let model = model()
-        let on = try await settled(of: model)
-        let row = try #require(on.first { $0.label == "When hot" }, "no When hot row")
-        #expect(row.value == "Limit frame rate", "the row says \(row.value ?? "nothing")")
-        model.setHeatLimit(false)
-        let off = try await settled(of: model)
-        let after = try #require(off.first { $0.label == "When hot" })
-        #expect(after.value == "Full frame rate", "the row says \(after.value ?? "nothing")")
     }
 }

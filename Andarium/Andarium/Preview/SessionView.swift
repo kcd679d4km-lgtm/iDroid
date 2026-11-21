@@ -26,8 +26,6 @@ struct SessionView: View {
         @Bindable var model = model
         let guestModel = model.guest ?? Guest.fresh(on: model.host)
         content(guestModel: guestModel)
-        // The text message bar, over the guest and above the keyboard.
-        .overlay(alignment: .bottom) { TextMessageBarOverlay() }
         .statusBarHidden(true)
         // The system honours the bottom edge's deferral only while the home
         // indicator is visible: with it hidden, one swipe goes Home.
@@ -70,7 +68,6 @@ struct SessionView: View {
                     guest
                         .frame(width: plan.guest.width, height: plan.guest.height)
                         .clipped()
-                        .guestScreenAccessibility(model.session.reader, edge: model.session.keysEdge, offered: model.offersScreenReader)
                         // As on the device, a touch on the guest closes the keys
                         // and still reaches the guest.
                         .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in model.session.closeSideKeys() })
@@ -86,10 +83,7 @@ struct SessionView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
                 guest
-                    // The keyboard of the text message bar leaves the guest still.
-                    .ignoresSafeArea(.keyboard)
                     .clipped()
-                    .guestScreenAccessibility(model.session.reader, edge: model.session.keysEdge, offered: model.offersScreenReader)
                     // As on the device, a touch on the guest closes the keys and
                     // still reaches the guest.
                     .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in model.session.closeSideKeys() })
@@ -248,42 +242,6 @@ struct SessionView: View {
         powerMenu = preset.powerMenu
         if preset.settings {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { settings = true }
-        }
-    }
-}
-
-private extension View {
-    /// The mock guest reads as the device's display does: Android's screen as
-    /// one element with the screen reader's state as its value; while the
-    /// screen reader is on, a container of one element that covers the screen,
-    /// a direct-touch area that VoiceOver is silent over; and no action on
-    /// activation (an action that does nothing, as the device's
-    /// `accessibilityActivate`).
-    @ViewBuilder
-    func guestScreenAccessibility(_ reader: ScreenReaderSession, edge: KeysEdge?, offered: Bool) -> some View {
-        if reader.isOn {
-            accessibilityHidden(true)
-                .overlay {
-                    Color.clear
-                        .contentShape(Rectangle())
-                        // The element is for VoiceOver; touches go to the mock guest under it.
-                        .allowsHitTesting(false)
-                        .accessibilityElement()
-                        .accessibilityLabel(ScreenReaderWords.displayLabel)
-                        .accessibilityValue(offered && !reader.displayWaitsForRead ? ScreenReaderWords.displayValue(reader) : "")
-                        .accessibilityHint(offered ? ScreenReaderWords.displayHint(reader, edge: edge) ?? "" : "")
-                        .accessibilityDirectTouch(true, options: .silentOnTouch)
-                        .accessibilityAction(.default) {}
-                        .accessibilityIdentifier("guest-display")
-                }
-                .accessibilityElement(children: .contain)
-        } else {
-            accessibilityElement(children: .ignore)
-                .accessibilityLabel(ScreenReaderWords.displayLabel)
-                .accessibilityValue(offered && !reader.displayWaitsForRead ? ScreenReaderWords.displayValue(reader) : "")
-                .accessibilityHint(offered ? ScreenReaderWords.displayHint(reader, edge: edge) ?? "" : "")
-                .accessibilityAction(.default) {}
-                .accessibilityIdentifier("guest-display")
         }
     }
 }

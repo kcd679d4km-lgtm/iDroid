@@ -143,8 +143,7 @@ public enum SnapshotRefusal: Error, Equatable, Sendable {
     /// An update started and did not finish; its data may be half upgraded.
     case unfinishedUpdate
     /// The guest's files do not match this app version: another system disk
-    /// under the same release, data nothing recorded, or an unsigned proof
-    /// and data of another system (`StartBlock.mismatch`).
+    /// under the same release, or data nothing recorded.
     case mismatch
     /// The volume cannot clone files (a Mac home that is not APFS).
     case volumeCannotClone
@@ -157,8 +156,7 @@ public enum SnapshotRefusal: Error, Equatable, Sendable {
     /// takes it forward (`StartBlock.newerDataLayout`, the app's side).
     case olderDataLayout
     /// The snapshot was taken on a system disk this app's release does not
-    /// carry; also a snapshot of another system under an unsigned proof, and
-    /// a proof's snapshot under another system.
+    /// carry.
     case differentSystem
     /// The snapshot's disk size is outside what this app's release accepts.
     case diskSizeNotAccepted(gib: Int)

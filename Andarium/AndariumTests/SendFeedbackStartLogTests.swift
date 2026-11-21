@@ -163,7 +163,7 @@ struct SendFeedbackStartLogTests {
         // And it goes with the mail, once the Problem and the details are written.
         sheet.form.problem = "Too slow"
         sheet.form.details = "Stuck at the boot screen"
-        sheet.sendAnyway()
+        sheet.send()
         let request = try #require(fixture.composer.request)
         #expect(request.attachments.map(\.fileName) == [Self.expectedName])
         #expect(request.body.contains("Boot: not finished"))
@@ -382,15 +382,15 @@ struct SendFeedbackStartLogTests {
         sheet.offerStartLog()
         #expect(sheet.form.attachments.count == 1)
         #expect(sheet.state.canSend && sheet.state.missing == .both && !sheet.state.readyToSend)
-        sheet.sendAnyway()
+        sheet.send()
         #expect(sheet.incomplete == .both && fixture.composer.request == nil)
         sheet.form.problem = "Too slow"
         #expect(sheet.state.missing == .details && !sheet.state.readyToSend)
-        sheet.sendAnyway()
+        sheet.send()
         #expect(sheet.incomplete == .details && fixture.composer.request == nil)
         sheet.form.details = "Stuck at the boot screen"
         #expect(sheet.state.missing == nil && sheet.state.readyToSend)
-        sheet.sendAnyway()
+        sheet.send()
         #expect(fixture.composer.request?.attachments.map(\.kind) == [.startLog])
         sheet.close()
     }

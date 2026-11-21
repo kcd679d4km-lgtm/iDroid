@@ -54,9 +54,6 @@ final class StubDriver: RuntimeDriver {
     /// The denials of the network the model told the driver, in order; nil is none.
     private(set) var networkNotices: [NetworkDenial?] = []
     func setNetworkNotice(_ denial: NetworkDenial?) { networkNotices.append(denial) }
-    /// What Settings' "When hot" told the driver, in order.
-    private(set) var heatLimits: [Bool] = []
-    func setHeatLimit(_ on: Bool) { heatLimits.append(on) }
     /// What the Haptics switch told the driver.
     var haptics = true
     func setHaptics(_ on: Bool) { haptics = on }
@@ -168,109 +165,6 @@ final class StubDriver: RuntimeDriver {
         return installOutcome
     }
 
-    /// Android's screen reader as the stub plays it: what the guest holds
-    /// (every service it has on, and `accessibility_enabled`), nil while it
-    /// cannot be asked, how long each reply takes, and the calls the model
-    /// made. The system carries TalkBack, off.
-    var screenReaderState: ScreenReaderState? = ScreenReaderState(
-        installedService: ScreenReader.services[0], enabledServices: [])
-    var screenReaderError: Error?
-    /// Each read's delay in turn; a read past the list answers at once.
-    var screenReaderReadDelays: [Duration] = []
-    /// How long a change, and the opening of Android's settings, wait to reach
-    /// Android, as a connection that is being established does: a task that
-    /// is cancelled meanwhile ends there (`CancellationError`) and Android is
-    /// left as it was. Where `screenReaderRepliesAfterCancel` is set the wait
-    /// goes on, and the operation reaches Android and answers late.
-    var screenReaderChangeDelay = Duration.zero
-    var screenReaderRepliesAfterCancel = false
-    /// The change writes the list and then fails, leaving `accessibility_enabled`
-    /// as it was: a write that stopped half way.
-    var screenReaderChangeFailsAfterListWrite = false
-    /// What opening Android's settings does besides counting: wait, then fail.
-    var accessibilitySettingsDelay = Duration.zero
-    var accessibilitySettingsError: Error?
-    struct ScreenReaderCall: Equatable {
-        var on: Bool
-        var service: String
-    }
-    private(set) var screenReaderReads = 0
-    private(set) var screenReaderChanges: [ScreenReaderCall] = []
-    private(set) var accessibilitySettingsOpened = 0
-    private(set) var accessibilitySettingsCalls = 0
-    /// How many operations were cancelled while they waited to reach Android,
-    /// and how many errors the stub delivered (to a session that may be over).
-    private(set) var screenReaderCancelled = 0
-    private(set) var screenReaderErrorsThrown = 0
-    private(set) var accessibilitySettingsErrorsThrown = 0
-    /// What the change's command reports instead of what it wrote: a guest
-    /// whose report disagrees with the request.
-    var screenReaderChangeReport: ScreenReaderState?
-    func readScreenReader() async -> ScreenReaderState? {
-        let index = screenReaderReads
-        screenReaderReads += 1
-        // The guest answers with what it holds when asked, however late the
-        // reply reaches the model.
-        let answer = screenReaderState
-        if index < screenReaderReadDelays.count { try? await Task.sleep(for: screenReaderReadDelays[index]) }
-        return answer
-    }
-    /// Waits as the connection to Android would; false when the task was
-    /// cancelled meanwhile and the operation never reached it.
-    private func reachAndroid(after delay: Duration) async -> Bool {
-        guard delay > .zero else { return true }
-        if screenReaderRepliesAfterCancel {
-            await Task.detached { try? await Task.sleep(for: delay) }.value
-            return true
-        }
-        do {
-            try await Task.sleep(for: delay)
-            return true
-        } catch {
-            screenReaderCancelled += 1
-            return false
-        }
-    }
-    func changeScreenReader(_ on: Bool, service: String) async throws -> ScreenReaderState {
-        screenReaderChanges.append(ScreenReaderCall(on: on, service: service))
-        guard await reachAndroid(after: screenReaderChangeDelay) else { throw CancellationError() }
-        if let screenReaderError, !screenReaderChangeFailsAfterListWrite {
-            screenReaderErrorsThrown += 1
-            throw screenReaderError
-        }
-        if let screenReaderChangeReport {
-            screenReaderState = screenReaderChangeReport
-            return screenReaderChangeReport
-        }
-        // The change edits what the guest holds now, as the command does, so
-        // a service turned on meanwhile stays on; it writes the service it
-        // was given, which is the guest's only if the guest still has that
-        // variant.
-        guard let current = screenReaderState else { throw AdbFailure(.io(EIO), activity: .screenReader) }
-        var enabled = current.enabledServices.filter { !ScreenReader.services.contains($0) }
-        if on { enabled.append(service) }
-        if screenReaderChangeFailsAfterListWrite {
-            screenReaderState = ScreenReaderState(
-                installedService: current.installedService, enabledServices: enabled,
-                accessibilitySetting: current.accessibilitySetting ?? !current.enabledServices.isEmpty)
-            screenReaderErrorsThrown += 1
-            throw screenReaderError ?? AdbFailure(.io(EIO), activity: .screenReader)
-        }
-        let after = ScreenReaderState(
-            installedService: current.installedService, enabledServices: enabled, accessibilitySetting: !enabled.isEmpty)
-        screenReaderState = after
-        return after
-    }
-    func openAccessibilitySettings() async throws {
-        accessibilitySettingsCalls += 1
-        guard await reachAndroid(after: accessibilitySettingsDelay) else { throw CancellationError() }
-        if let accessibilitySettingsError {
-            accessibilitySettingsErrorsThrown += 1
-            throw accessibilitySettingsError
-        }
-        accessibilitySettingsOpened += 1
-    }
-
     /// What the resume of a guest paused for space answers, and what Shut
     /// down does; a test sets them as the runtime would behave.
     var resumeAnswers = true
@@ -313,20 +207,6 @@ final class StubDriver: RuntimeDriver {
     /// What Android's storage reads as; a test sets it as a boot would.
     var storage: Bool? = true
     func storageReady() async -> Bool? { storage }
-    /// Each text message request the model handed over, in order.
-    private(set) var smsSent: [GuestSmsRequest] = []
-    /// How the stub answers a text message: a test sets it to hold the answer
-    /// back or to say what the channel would. Absent, Android took it.
-    var smsAnswer: (@MainActor (GuestSmsRequest) async -> SmsReply)?
-    func sendSms(_ request: GuestSmsRequest) async -> GuestSmsChannel.Outcome {
-        smsSent.append(request)
-        if let smsAnswer { return await smsAnswer(request).outcome(for: request) }
-        return SmsReply.handedOver(1).outcome(for: request)
-    }
-    /// The notice's files, which a test reads and fails, and the notice over them.
-    var noticeFiles = RecordingNoticeFiles()
-    lazy var textMessageNotice = TextMessageNotice(
-        directory: URL(fileURLWithPath: "/instance"), files: noticeFiles)
     func startAdbOverNetwork() throws {
         if let startError { throw startError }
         listening = true
@@ -346,12 +226,7 @@ final class StubDriver: RuntimeDriver {
 /// returning Home with a fresh session and a failed run refusing another
 /// Start.
 @MainActor
-final class UpdateFlowTests {
-    // The model of a test adopts the process's App Intent hub, which the suites
-    // of Add to Home Screen replace: these take turns with them (`AndroidAppsHubLock`).
-    init() async { await AndroidAppsHubLock.shared.acquire() }
-    deinit { Task { await AndroidAppsHubLock.shared.release() } }
-
+struct UpdateFlowTests {
     private let host = HostDevice(
         name: "iPad", processorCount: 6, memory: MemoryPolicy(maximumsMiB: [4096]), freeStorageBytes: 40_000_000_000
     )
@@ -574,32 +449,5 @@ final class UpdateFlowTests {
         model.start(.normal)
         #expect(model.phase == .failed)
         #expect(driver.begun.count == 1)
-    }
-}
-
-/// What the guest's service answers to a text message request, as a test says
-/// it: the channel's outcome for the request it was asked.
-enum SmsReply: Sendable {
-    case handedOver(Int), handedOverEarlier(Int)
-    case notHandedOver(String), uncertain(String), unsettled
-    case refusedVersion
-    case notSent, notTaken, noAnswer
-    /// Bytes as they come, whatever they are.
-    case bytes(String)
-
-    func outcome(for request: GuestSmsRequest) -> GuestSmsChannel.Outcome {
-        let id = request.identifier
-        switch self {
-        case .handedOver(let parts): return .answered(Data("2.handed-over.\(id).\(parts)".utf8))
-        case .handedOverEarlier(let parts): return .answered(Data("2.handed-over-earlier.\(id).\(parts)".utf8))
-        case .notHandedOver(let reason): return .answered(Data("2.not-handed-over.\(id).\(reason)".utf8))
-        case .uncertain(let reason): return .answered(Data("2.uncertain.\(id).\(reason)".utf8))
-        case .unsettled: return .answered(Data("2.unsettled.\(id).store".utf8))
-        case .refusedVersion: return .answered(Data("2.refused-version".utf8))
-        case .notSent: return .notSent
-        case .notTaken: return .notTaken
-        case .noAnswer: return .noAnswer
-        case .bytes(let text): return .answered(Data(text.utf8))
-        }
     }
 }

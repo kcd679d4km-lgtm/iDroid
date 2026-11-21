@@ -4,31 +4,40 @@
  * x86_64_link_walk_probe.inc and x86_64_return_walk_probe.inc), the
  * counterpart of walk_order.inc. Include it after x86_64_probe_harness.inc.
  *
- * walk_order_table emits `count` halfwords of block indices below `blocks`,
- * both powers of two: a xorshift sequence when `random` is 1, the indices in
- * order otherwise. The assembler computes them, so no code runs to fill the
- * table and none is translated in front of the timed loop.
+ * walk_order_fill fills `count` words at r14 with block indices below
+ * `blocks`, both powers of two: a xorshift sequence when `random` is 1, the
+ * indices in order otherwise. It runs once, before the timed loop, and uses
+ * rax, rcx and rdx.
  *
  * walk_family emits one register-only instruction of eight families, chosen
  * by `index` modulo eight, each a gadget entry of its own. It reads r11 and
  * writes r10.
  */
 
-.macro walk_order_table count, blocks, random
-	.set walk_order_state, 0x7f4a7c159e3779b9
-	.set walk_order_index, 0
-	.rept \count
+.macro walk_order_fill count, blocks, random
+	movabs	rax, 0x7f4a7c159e3779b9
+	xor	ecx, ecx
+.Lwalk_fill\@:
 .if \random
-	/* xorshift64 (13, 7, 17), the shifts right logical. */
-	.set walk_order_state, walk_order_state ^ (walk_order_state << 13)
-	.set walk_order_state, walk_order_state ^ ((walk_order_state >> 7) & 0x01ffffffffffffff)
-	.set walk_order_state, walk_order_state ^ (walk_order_state << 17)
-	.short ((walk_order_state >> 32) & 0xffffffff) & (\blocks - 1)
+	mov	rdx, rax
+	shl	rdx, 13
+	xor	rax, rdx
+	mov	rdx, rax
+	shr	rdx, 7
+	xor	rax, rdx
+	mov	rdx, rax
+	shl	rdx, 17
+	xor	rax, rdx
+	mov	rdx, rax
+	shr	rdx, 32
 .else
-	.short walk_order_index & (\blocks - 1)
+	mov	edx, ecx
 .endif
-	.set walk_order_index, walk_order_index + 1
-	.endr
+	and	edx, \blocks - 1
+	mov	word ptr [r14 + rcx * 2], dx
+	add	ecx, 1
+	cmp	ecx, \count
+	jb	.Lwalk_fill\@
 .endm
 
 .macro walk_family index

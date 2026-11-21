@@ -92,9 +92,9 @@
     "floating-point-trap": 85,
     "illegal-instruction": 31116,
     "instruction-budget": 129,
-    "memory-fault": 8607,
+    "memory-fault": 8606,
     "pc-alignment": 15,
-    "system-call": 116663
+    "system-call": 116664
   },
   "cases_by_profile": {
     "4k": 156690
@@ -199,8 +199,8 @@
     "sha256": "6e18fe890e0c5a36b06fe731f7db78d53e6ae114cdb011bee87ce9e0228bc631"
   },
   "memory_blobs": 1113,
-  "pack_bytes": 11820910,
-  "pack_sha256": "86f5aa7e8a179a95b7f3a95d23fbb28751e6881a3122575670ca2af215346045",
+  "pack_bytes": 11820908,
+  "pack_sha256": "251d247870173588fcca40e5ac092d583d624566ed56005afb2b48ac2fe6df19",
   "producer_commit": "121d0e3191264927d6d480915d86db74cc8f1eed",
   "programs": 128409,
   "records": 933,

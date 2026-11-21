@@ -283,7 +283,7 @@ struct SendFeedbackFilesScreenTests {
         sheet.form.problem = "x"
         sheet.form.details = "Details"
         await sheet.addFiles([try fixture.original("sent.zip")])
-        sheet.sendAnyway()
+        sheet.send()
         #expect(fixture.access.stops.isEmpty, "the composer maps the file: the access stays until it is over")
         fixture.composer.leave(.sent)
         #expect(fixture.access.stops.isEmpty && sheet.scopes.count == 1, "the notice is over the list: the files wait for the close")
@@ -303,7 +303,7 @@ struct SendFeedbackFilesScreenTests {
         await sheet.addFiles([try fixture.original("sent.zip")])
         sheet.applicationEnteredBackground()
         #expect(fixture.access.stops.isEmpty, "a draft that was not sent keeps its files in the background")
-        sheet.sendAnyway()
+        sheet.send()
         fixture.composer.leave(.sent)
         sheet.applicationEnteredBackground()
         #expect(fixture.access.stops == ["sent.zip"] && sheet.scopes.count == 0)
@@ -344,7 +344,7 @@ struct SendFeedbackFilesScreenTests {
         let clash = try fixture.original("Screenshot-\(stamp).PNG")
         let odd = try fixture.original("My App \u{5E94}\u{7528} (v2)\u{202E}.zip")
         await sheet.addFiles([clash, odd])
-        sheet.sendAnyway()
+        sheet.send()
         let request = try #require(fixture.composer.request)
         #expect(request.attachments.map(\.fileName) == [
             "screenshot-\(stamp).png", "Screenshot-\(stamp)-2.PNG", "My App \u{5E94}\u{7528} (v2)_.zip",
@@ -428,7 +428,7 @@ struct SendFeedbackFilesScreenTests {
         let row = try #require(sheet.form.attachments.items.first)
         #expect(row.bytes == 3 << 30 && sheet.state.attachments.exceedsWarningSize)
         #expect(sheet.state.canSend, "the warning never blocks Send")
-        sheet.sendAnyway()
+        sheet.send()
         let request = try #require(fixture.composer.request)
         let mapped = try #require(request.mapped.first, "the composer is given the file mapped")
         #expect(request.mapped.count == 1 && mapped.count == 3 << 30 && mapped[0] == 0x50)
@@ -479,7 +479,7 @@ struct SendFeedbackFilesScreenTests {
         let busy = try #require(sheet.fileBusy)
         #expect(busy.title == "Copying file" && busy.progress == 0 && busy.cancel != nil && busy.result == nil)
         #expect(sheet.state.addingFiles && !sheet.state.canSend && !sheet.state.canAddFiles)
-        sheet.sendAnyway()
+        sheet.send()
         #expect(fixture.composer.request == nil, "Send waits for the files it will carry")
         gate.release()
         await adding.value
@@ -577,14 +577,14 @@ struct SendFeedbackFilesScreenTests {
         sheet.form.details = "Details"
         await sheet.addFiles([keep, lose])
         try FileManager.default.removeItem(at: lose)
-        sheet.sendAnyway()
+        sheet.send()
         #expect(fixture.composer.request == nil, "a mail never goes without a file the person added, unseen")
         #expect(sheet.form.attachments.items.map(\.fileName) == ["keep.zip"])
         #expect(sheet.failure?.title == "Attachment not available")
         #expect(sheet.failure?.message == "An attachment is no longer available, so it was taken out of the list. Check the list, then send again.")
         #expect(fixture.access.stops == ["lose.zip"] && sheet.form.problem == "x")
         sheet.failure = nil
-        sheet.sendAnyway()
+        sheet.send()
         #expect(fixture.composer.request?.attachments.map(\.fileName) == ["keep.zip"], "the second try goes")
         #expect(fixture.composer.request?.mapped == [Data(repeating: 7, count: 4096)])
         sheet.close()
@@ -599,7 +599,7 @@ struct SendFeedbackFilesScreenTests {
         sheet.form.details = "Details"
         await sheet.addFiles([file])
         fixture.access.notDownloaded("evicted.zip")
-        sheet.sendAnyway()
+        sheet.send()
         #expect(fixture.composer.request == nil && sheet.form.attachments.isEmpty)
         #expect(sheet.failure?.title == "Attachment not available")
         #expect(fixture.access.stops == ["evicted.zip"] && FileManager.default.fileExists(atPath: file.path))
@@ -615,7 +615,7 @@ struct SendFeedbackFilesScreenTests {
         sheet.form.details = "Details"
         await sheet.addFiles([file])
         try Data(repeating: 2, count: 21 << 20).write(to: file)
-        sheet.sendAnyway()
+        sheet.send()
         let request = try #require(fixture.composer.request)
         let sent = try #require(request.attachments.first)
         #expect(sent.bytes == 21 << 20 && sheet.form.attachments.items[0].bytes == 21 << 20)
@@ -634,7 +634,7 @@ struct SendFeedbackFilesScreenTests {
         sheet.form.details = "Details"
         await sheet.addFiles([file])
         try Data().write(to: file)
-        sheet.sendAnyway()
+        sheet.send()
         #expect(fixture.composer.request == nil && sheet.form.attachments.isEmpty)
         #expect(sheet.failure?.title == "Attachment not available")
         sheet.close()
@@ -649,7 +649,7 @@ struct SendFeedbackFilesScreenTests {
         sheet.takeScreenshot()
         #expect(await eventually { sheet.form.attachments.count == 1 })
         try FileManager.default.removeItem(at: sheet.form.attachments.items[0].url)
-        sheet.sendAnyway()
+        sheet.send()
         #expect(fixture.composer.request == nil && sheet.form.attachments.isEmpty)
         #expect(sheet.failure?.title == "Attachment not available")
         sheet.close()
@@ -672,7 +672,7 @@ struct SendFeedbackFilesScreenTests {
             if url.lastPathComponent == "lose.zip" { try? FileManager.default.removeItem(at: url) }
             return found
         }
-        sheet.sendAnyway()
+        sheet.send()
         #expect(fixture.composer.request == nil, "a mail never goes without a file the person added, unseen")
         #expect(sheet.form.attachments.items.map(\.fileName) == ["keep.zip"])
         #expect(sheet.failure?.title == "Attachment not available")
@@ -681,7 +681,7 @@ struct SendFeedbackFilesScreenTests {
         // Looking at the list again, the person sends the rest.
         fixture.app.feedbackServices.files.inspect = look
         sheet.failure = nil
-        sheet.sendAnyway()
+        sheet.send()
         #expect(fixture.composer.request?.attachments.map(\.fileName) == ["keep.zip"])
         #expect(fixture.composer.request?.mapped == [Data(repeating: 7, count: 4096)])
         sheet.close()
@@ -810,7 +810,7 @@ struct SendFeedbackFilesScreenTests {
         await sheet.addFiles([keep, one, two])
         try FileManager.default.removeItem(at: one)
         try FileManager.default.removeItem(at: two)
-        sheet.sendAnyway()
+        sheet.send()
         #expect(fixture.composer.request == nil && sheet.form.attachments.items.map(\.fileName) == ["keep.zip"])
         #expect(sheet.failure?.title == "Attachments not available")
         #expect(sheet.failure?.message == "2 attachments are no longer available, so they were taken out of the list. Check the list, then send again.")
@@ -827,7 +827,7 @@ struct SendFeedbackFilesScreenTests {
         sheet.form.problem = "x"
         sheet.form.details = "Details"
         await sheet.addFiles([chinese, japanese])
-        sheet.sendAnyway()
+        sheet.send()
         let request = try #require(fixture.composer.request)
         #expect(request.attachments.map(\.fileName) == ["\u{6D4B}\u{8BD5}\u{5E94}\u{7528}.zip", "\u{30C6}\u{30B9}\u{30C8}\u{30A2}\u{30D7}\u{30EA}.zip"])
         #expect(request.attachments.map(\.displayName) == request.attachments.map(\.fileName))
@@ -920,7 +920,7 @@ struct SendFeedbackFilesScreenTests {
         // The mail carries what was attached and never a package.
         sheet.form.problem = "x"
         sheet.form.details = "y"
-        sheet.sendAnyway()
+        sheet.send()
         #expect(fixture.composer.request?.attachments.map(\.fileName) == ["trace.zip", "notes.txt"])
         sheet.close()
     }
@@ -1169,7 +1169,7 @@ struct SendFeedbackFilesScreenTests {
             await model.addFiles([file])
             model.form.problem = problem
             model.form.details = details
-            model.sendAnyway()
+            model.send()
         }
         var alert: UIAlertController?
         let shown = await eventually {

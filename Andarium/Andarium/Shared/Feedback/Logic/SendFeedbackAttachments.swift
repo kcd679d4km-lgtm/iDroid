@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
 /// One file that goes with the mail: staged in the sheet's folder, which is
 /// removed when the sheet closes, or, for a file the person picked from Files,
 /// where it is kept (`inPlace`).
-nonisolated struct SendFeedbackAttachment: Identifiable, Hashable, Sendable {
+nonisolated struct SendFeedbackAttachment: Identifiable, Equatable, Sendable {
     enum Kind: Equatable, Sendable {
         case bugReport, screenshot, photo, video
         /// What the sheet attaches by itself when it opens during a start.
@@ -88,7 +88,7 @@ nonisolated struct SendFeedbackAttachment: Identifiable, Hashable, Sendable {
     var size: String { Formats.size(bytes: bytes) }
 }
 
-nonisolated struct SendFeedbackPixels: Hashable, Sendable {
+nonisolated struct SendFeedbackPixels: Equatable, Sendable {
     var width: Int
     var height: Int
 }

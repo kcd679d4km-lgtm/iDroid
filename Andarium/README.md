@@ -18,7 +18,6 @@ AndariumCore/         Swift package: the model and the adb client, no UIKit; it
                       re-exports GuestHostCore (../GuestHost/Core)
 AndariumTests/        hosted tests of the device app
 AndariumUITests/      UI tests of the device app in the Simulator
-AndariumPreviewUITests/ UI tests of the Simulator preview
 Config/               entitlements, Info.plist, privacy manifest, bridging header,
                       build settings (Andarium.xcconfig)
 scripts/              system staging, the App Store bundle check,
@@ -65,9 +64,6 @@ or state directly, and `scripts/capture-screens.py` (`--help`) captures them:
 xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \
     -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' build
 ```
-
-`AndariumPreviewUITests` drives the preview through those arguments; the
-scheme's `test` action runs it.
 
 ## Devices
 
@@ -162,22 +158,10 @@ xcodebuild -project Andarium/Andarium.xcodeproj -scheme Andarium \
 ```
 
 The frameworks go to `.build/kernarium-xcframeworks`, which Kernarium shares,
-so package the runtime a build needs just before it. A runtime that links the
-ahead-of-time framework is packaged with `UmlArm64Aot.xcframework`: the
-Simulator runtime takes the accepted AOT artifact, and the device runtime
-takes it only when `accepted-aot.env` accepts it for archives (a device build
-that measures it names an artifact, `-DUML_AOT_ARTIFACT=DIR`, when it
-configures the runtime). The staging script checks
+so package the runtime a build needs just before it. The staging script checks
 the accepted release against its manifest and layout and stages the system
 disk, partition layout, kernel command line and manifest into
 `.build/andarium-system`, which the application bundles as it stands.
-A developer build can stage an unsigned proof image instead
-(`stage-system-image.py --release DIR --unsigned-proof`), whose manifest stays
-a proof's, completed from the tracked image line and the accepted Android
-kernel, and which the AppStore and TestFlight configurations refuse. The
-application starts it only on a fresh or isolated guest instance
-(`ANDARIUM_GUEST_INSTANCE`): a guest with data of another system cannot start
-until it is erased, and nor can a guest made from a proof start another system.
 
 The `AndariumTests` bundle runs hosted in the application on an iPad, in the
 iOS Simulator or, as an iPad app, on an Apple silicon Mac (whose derived data
@@ -247,18 +231,12 @@ block.
   phase runs [`scripts/check-embedded-artifacts.py`](../scripts/check-embedded-artifacts.py),
   which compares the accepted Android release and kernel descriptors with the
   commit's inputs, and the staged and packaged system and runtime with the
-  descriptors, and fails naming the changed paths and commits. The staged and
-  packaged system disk must be the one of the accepted release installed below
-  `.build/android/releases`, not only the one their own layout names. It also
-  refuses a packaged kernel whose Linux banner names a build user or host other
-  than the neutral `kernarium@kernarium`. With `--aot` it also checks the AOT
-  artifact: an archive embeds `UmlArm64Aot.framework` (made by the packaging
-  step when the runtime links it, and embedded only then) only when
-  `android/lineage-24/metadata/accepted-aot.env` accepts it for archives, and
-  the framework's blob is the accepted one. A release that records no input trees, a
+  descriptors, and fails naming the changed paths and commits. It also refuses
+  a packaged kernel whose Linux banner names a build user or host other than
+  the neutral `kernarium@kernarium`. A release that records no input trees, a
   dirty input, or a staged or packaged artifact that is not the accepted one
-  (an unsigned proof image included) stops the build; only the user decides to
-  ship pending changes, by naming the release ID in `PENDING_INPUTS_DECISION`.
+  stops the build; only the user decides to ship pending changes, by naming the
+  release ID in `PENDING_INPUTS_DECISION`.
 - Its last build phase runs `scripts/check-app-store-bundle.py`, which fails the
   build on a missing Info.plist key, an environment knob, a symbol or log text
   of the debugging and automation support, the JIT (its symbols and text and
@@ -284,8 +262,7 @@ block.
   TestFlight carries Send feedback and Follow developer on X under the same
   conditions, and Buy me tokens, Review on the App Store and the ICP filing
   number never, whatever the local files hold; its bundle check requires
-  those three absent. It alone carries the [App Store notice](#app-store-notice),
-  and only when the identifier is in the ignored `Config/Review.local.xcconfig`.
+  those three absent.
 
 ```sh
 cmake --preset kernarium-ios-device-android-app-store
@@ -330,19 +307,7 @@ report's overlay text is the app's own.
 Send needs both a problem (the mail's subject) and details (its body); white
 space counts as empty, and a file or the start log is neither. Send stays
 enabled while one is empty: its tap opens no composer and shows one alert that
-names what is missing, and the first empty field takes the focus after OK. With
-both written, no bug report attached and one that can be made now, Send asks
-first (Create bug report, which stays in the sheet, or Send without bug report),
-and the bug report's row leads in to read-only pages inside the sheet's own
-navigation (Back, no Done): the file as the mail carries it, its top level as
-folders and files (at most sixteen levels of folders: what a deeper path has
-beyond them is the file's name), a text as one page that scrolls on with a thumb on the edge (only a band
-around it takes a touch, until it is held),
-and the screenshot (a PNG, rebuilt from its critical chunks before it is decoded
-as a bounded thumbnail; a JPEG is not shown). Nothing is
-extracted, and a file that is not text is dimmed and opens nothing. The start
-log's row shows its text the same way
-(`Shared/Feedback/Logic/SendFeedbackArchive*.swift`, `SendFeedbackReportPages.swift`). Once
+names what is missing, and the first empty field takes the focus after OK. Once
 the mail is sent, the Feedback sent notice stays over the sheet, which keeps what
 was sent and takes no touch; the notice's Done closes both and ends the draft,
 and a swipe down or the toolbar's close does nothing meanwhile.
@@ -514,9 +479,7 @@ in an App Store build, and fails on the identifier's digits in any file of a
 bundle that does not name it (as UTF-8 or UTF-16, never printed). Tests turn it
 on in a Debug build with `REVIEW_ID=id0000000000`, which the check accepts in
 Debug alone. Its word is the `Review` string table. Opening it answers the
-[Rating prompt](#rating-prompt). A TestFlight build has neither the item nor
-the prompt; it reads the same identifier for the [App Store
-notice](#app-store-notice).
+[Rating prompt](#rating-prompt).
 
 ### Rating prompt
 
@@ -550,32 +513,6 @@ without that feature holds no request, counter or stored record.
   maker's own check; an App Store build compiles both out, which the bundle
   check's knob scan covers. The application's own launch is the only one that
   asks: the Simulator preview and a hosted test build their own.
-
-### App Store notice
-
-A card first among Home's notices and on Welcome, with the App Store
-version's icon, a line that points a tester to that version, a caution and one
-button that opens its App Store page through the system, and a row in Info that
-stays as the way back to the page once the card is dismissed
-(`Shared/StoreLink/`). It is compiled in, under the `TESTFLIGHT_STORE_LINK`
-condition, only in a TestFlight build whose ignored `Config/Review.local.xcconfig`
-names the application's App Store identifier: `STORE_LINK_ID` takes it from
-there in TestFlight and is empty in every other configuration, and Info.plist
-holds it under `AndariumStoreLinkID`, so an AppStore, Release or Debug build, a
-fork or a sideload holds no card, row, address or text. The address is the
-page's, with no write-review action, and `REVIEW_ID` stays AppStore's alone.
-The card's close mark dismisses it for the installation, whatever the build
-number, and Info keeps its row. The card is the first of Home's notices and never
-covers Start, and Welcome's column scrolls while the card is up, so that a short
-display still reaches Set up virtual machine. Its words are the `StoreLink` string table, built
-only where the notice is.
-
-The bundle check says for every configuration whether it is compiled in, allows
-the identifier in a TestFlight bundle only under that key (never under Review's),
-and refuses the key, the code, the table and the words in an AppStore bundle and
-the identifier's digits in any other file of a bundle. Tests turn the notice on
-in a Debug build and in the Preview with `STORE_LINK_ID=id0000000000`, which the
-check accepts in Debug alone.
 
 ### Home toolbar menu
 
@@ -647,9 +584,7 @@ control out.
   `StartPlan` is what Home shows of them before Start. An update clones
   `data.img` first (the update's copy, until the updated Android has booted),
   and Erase virtual machine deletes everything the guest has stored, its snapshots,
-  the adb key, its installation identity, the sender of the last text message
-  sent to it and the notice of a text message whose outcome was not yet shown
-  included.
+  the adb key and its installation identity included.
 - **Backup.** The guest is left out of iCloud and computer backups unless the
   user turns on Include in backups. Its snapshots are never backed up.
 - **Snapshots.** A snapshot is an APFS clone of `data.img` with a copy of
@@ -815,39 +750,26 @@ requires reopening Andarium.
   under Capabilities, a per-guest switch that is on until the person turns it
   off, decides whether this device plays it: off, the application holds no
   connection and no engine for the Taptic Engine and the guest keeps its
-  vibrator. A harness launch can keep it off for its run
-  ([Automation](#automation)). A game controller's rumble is not governed by
-  it. An iPad, a Mac or the Simulator, which have no Taptic Engine, give the
-  guest no vibrator and
+  vibrator. A game controller's rumble is not governed by it. An iPad, a Mac or
+  the Simulator, which have no Taptic Engine, give the guest no vibrator and
   Capabilities no Haptics row. The wire is `HapticsProtocol`, whose golden frames
   the HAL's test shares (`tests/unit/andarium/fixtures`); the
   [Android README](../android/lineage-24/README.md) owns the HAL.
 - **Heat.** The application tells the guest's thermal HAL how hot the device is
   over vsock 5559 (`ThermalSession`; the wire is `ThermalProtocol`, whose
   golden frames the HAL's test shares in `tests/unit/andarium/fixtures`).
-  Android hears of heat only from iOS's critical state: nominal, fair and
-  serious are none, critical is Android's critical, and the host never sends
-  any other level. The severity is the hottest reported state of the last
-  120 s: it rises at once and falls 120 s after critical ended, so a state
-  that flickers around critical is one steady cap. A state Android is told
-  nothing of, serious included, has no hold. While critical is told Android
-  lowers the guest's frame rate to 30, and the first time in a run that this
-  starts the session screen says so once. The session and stall records, the
-  statistics and the feedback information keep iOS's real state, serious
-  included. A system without the HAL hears nothing and shows no notice; the
+  Android hears of heat from iOS's serious state: nominal and fair are none
+  (fair is not reported because it would not change the frame rate), serious
+  is Android's severe, critical is its critical, and the host never sends a
+  level that shuts the guest down. The severity is the hottest reported state
+  of the last 120 s: it rises at once and falls 120 s after the hotter state
+  ended, so a state that flickers around serious is one steady cap. From severe
+  up Android lowers the guest's frame rate to 30, and the first time in a run
+  that this starts the session screen says so once. The session and
+  stall records, the statistics and the feedback information keep iOS's real
+  state. There is no switch. A system without the HAL hears nothing and shows
+  no notice; the
   [Android README](../android/lineage-24/README.md) owns the HAL.
-  Settings' Performance section, after Stats in a normal session, has "When
-  hot": Limit frame rate, the default, or Full frame rate
-  (`HeatLimitPreference`, stored until it is turned back on; the feedback
-  information says it in "Frame rate limit when hot"). Full frame rate tells
-  Android none at every state of iOS's, critical included, at once when it is
-  chosen, and shows no notice at any heat; Limit frame rate again tells it the
-  policy's severity at once. The policy runs either way (`deviceIsHot` says
-  the device is held at critical, for the section's footnote). The notice's
-  words are a button that opens an alert whose Turn Off chooses Full frame
-  rate in one tap; Dismiss only dismisses. A harness launch runs with the
-  default and keeps nothing; `ANDARIUM_HEAT_LIMIT` (`1` or `0`) states it for
-  the run ([Automation](#automation)).
 - **Game controllers.** Each game controller iOS has connected is a HID
   device in the guest, made through the guest's relay over vsock 5558
   (`GamepadSession`; the wire is `GamepadProtocol`, whose golden frames the
@@ -940,22 +862,6 @@ requires reopening Andarium.
   Beside the closed keys their tip, while it shows, takes touches on its card
   alone (on a Mac, where an iPad app's popover keeps its dimming view, every
   touch), and it goes with the closed keys when they open or the session ends.
-- **VoiceOver.** A new screen, the start of a run and how an operation ended
-  are announced (`VoiceOver`), the busy and low-space screens are modal, and the
-  closed side keys carry actions that move them. Android's display is one
-  element (`GuestDisplayAccessibility`) whose value is Android's screen reader's
-  state and whose activation sends Android no touch; while the screen reader is
-  on the display is a container of one direct-touch element, so touches reach
-  Android and it speaks instead of VoiceOver, with no rotor setting needed
-  ([Android's screen reader](#android-operations)). The sentence of a run's
-  start is announced at high priority, which VoiceOver's own speech of the
-  element its cursor lands on after the screen change does not cut off; the
-  display's element takes VoiceOver's focus once it has been spoken, with
-  nothing over the display, and the card that asks waits for it too (at most 15
-  seconds, where VoiceOver reports no end); the card then takes the focus on its
-  own title. Each option row on Home
-  reads as one element, its control, which carries the row's title as its label
-  (the title is no second stop), followed by the line under it.
 - **Keyboard and mouse.** The guest has a hardware keyboard and a mouse
   (virtio-input devices, plugged and unplugged at run time) while iOS has the
   hardware. Every key goes to Android as its position (the usage on the HID
@@ -1071,33 +977,6 @@ requires reopening Andarium.
   prints, at most about twice a second, the Core Motion sample behind the
   guest's field with iOS's own attitude and heading; App Store builds compile it
   out.
-- **Text messages.** The Developer section of Settings has Send text
-  message… under ADB over network, in every build configuration, but the
-  device application holds the capability back until an accepted release image
-  carries the service (`Capabilities.device`); no shipped configuration offers
-  it. Pressed, the row closes Settings and a bar rises over the running
-  Android, above the keyboard, which does not move Android. The bar has a
-  title (the row's symbol, "Text message" as the heading VoiceOver starts on,
-  and a line saying Android receives it as an incoming text) with Close, a
-  sender (the last one used, else Andarium; it is cleaned before it is judged),
-  a message box, which alone asks iOS for a one-time code, and Send. While a
-  message is being sent the fields refuse edits and keep the keyboard. The
-  session owns the bar (`TextMessageState`): a send that is under way ends
-  with the run, and its late answer is dropped. Send waits while Android is
-  paused for lack of space, and the keyboard goes while it is, so the pause
-  card does not cover the bar's title. The words say only what is known: that
-  Android took the message, already had it, did not receive it, did not confirm
-  it, or cannot tell, and VoiceOver hears them. Sending again, within the run, a
-  message that Android did not confirm asks about the first send instead of
-  handing it over again (`GuestSms.Retries`); "not sent" is said only of a first
-  send. When a message may have arrived, the bar says so, also the next time it
-  opens after a session that ended before a send's result was shown, and sending
-  it again is then a new message (`TextMessageNotice`). Sixteen messages waiting
-  for Android to confirm them refuse a new draft until Android restarts. Each
-  message goes to the guest over vsock port 5560 (`GuestSmsChannel`), not over
-  adb. The sender and text rules and the limits are `GuestSms`'s; the system
-  image must include the
-  [SMS service](../android/lineage-24/README.md#text-messages).
 - **Free space.** Free space is the space a write can use (`HostStorage`,
   `statfs(2)`), the one figure the watch, the start and transfer checks and
   every screen use; it leaves out the purgeable space iOS Settings counts, so
@@ -1206,38 +1085,6 @@ is on. `AndariumCore/Adb` speaks the protocol.
 - **Key.** `AdbKeyStore` keeps one RSA-2048 key per guest in the Keychain, this
   device only and not synchronized. Its public key goes in each boot request
   (`android_adb_public_key`), which adbd authorizes for that boot.
-- **Android's screen reader.** In a normal session, the Accessibility section,
-  last in Settings, turns Android's screen reader (TalkBack) on and off by
-  editing `enabled_accessibility_services` and `accessibility_enabled` in one
-  adb shell command that reads the list it writes, so every other service the
-  virtual machine has on stays on (`ScreenReader`, `Capabilities.screenReader`).
-  Each command acts on the foreground user (`--user`), checks that lookup and
-  the live list (split without pathname expansion; a list that is not a list of
-  services is refused before anything is written), and fails when any write or
-  the delete fails; another user's own setting stays as it is. Its reply, like a
-  read's, is exactly the report `ScreenReader.parse` defines, ending with its
-  terminator, and the screen reader is on only where the list names it and
-  `accessibility_enabled` is on: any other reply is "couldn't check", never a
-  state, and a change that left the two apart is not a change. Opening Android's
-  Accessibility page needs a shell result with status 0. A change, a read it
-  asks for and the opening of that page are the session's operations: the
-  session's end (a power off, Android's own restart) cancels them, they ask
-  nothing of Android once it has ended, and nothing they report reaches the next
-  session. The switch follows what Android reports while Settings is open
-  and, while VoiceOver runs, every few seconds. While VoiceOver runs and the
-  screen reader is off, a card over Android says that VoiceOver cannot read
-  Android's screen, that the screen reader can and how to come back (touch the
-  side keys, on the edge they are on: the keys report it as they move), and
-  asks; nothing turns the screen reader on but the person's own action, and
-  turning it off, in Settings or in Android, ends the asking for the run.
-  Turning it on says so with the way back, and so does the first read of a run
-  that finds it on already while something covers the display; where the
-  display takes VoiceOver's focus its own words carry it, and its hint ends with
-  the way back. The card that says a system has no screen reader shows once per
-  run, not once per virtual machine. The system image carries TalkBack and
-  eSpeak NG ([Android README](../android/lineage-24/README.md#accessibility)); a
-  virtual machine whose system has none shows the switch as unavailable and the
-  card says so.
 - **Create bug report and Install APK** are in every build, in a normal
   session. Settings lists Install APK and the file browser first, above the
   statistics, and the side keys' tip adds a line saying where Install APK is
@@ -1334,42 +1181,6 @@ is on. `AndariumCore/Adb` speaks the protocol.
   the switch is when the listing taken as the file went again and the one after
   the install differ by an app: the card's detail gains two sentences. The
   switch is the person's choice per app; Andarium keeps nothing of it.
-- **Add to Home Screen** (Settings > Apps) puts an Android app's own icon and
-  name on the iOS Home Screen, through Apple's Shortcuts. An App Intent
-  (`OpenAndroidAppIntent`, `Shared/AndroidAppIntents.swift`) has one entity per
-  launchable app, `AndroidAppEntity`, identified by the `package/class` of its
-  launcher activity, so an icon made before Android was erased finds its app
-  again once the app is reinstalled. A held tile in Shortcuts adds the icon; the
-  row opens a chooser and a guide with Apple's Shortcuts button. There is no URL
-  scheme, extension or shared container: the intent runs in Andarium's process.
-  The list comes from the image's `kernarium_apps` tool
-  ([`android/lineage-24`](../android/lineage-24/README.md)) through
-  `AndroidAppsTool` and `AndroidAppRefresh` in `AndariumCore`, and is cached by
-  `AndroidAppStore` (catalog, icons, and a small record per icon that survives
-  an erase), so the tiles and the chooser answer while Android is off. The row
-  exists only in a normal session whose image has the tool. A Mac and a Vision
-  Pro have no Home Screen: there the intent runs, but the apps are no entities,
-  nothing is written to Spotlight and the tiles are not told of them. An icon
-  is stored only as a picture the host drew itself (`FlatteningAppsTool`), and a
-  label as the tool's own sanitising makes it, whatever the tool or the cache
-  file says.
-  A request from an icon follows the Start button's rules (`AppOpenPlanner`): a
-  running Android opens the app once `AndroidAppReadiness` says it is ready
-  (setup finished for the foreground user; for a request that began the boot or
-  arrived during it, the home screen's first resume observed, and once the boot
-  is over another app in front is no obstacle; a launch that was sent is never
-  sent again), a stopped one is started, and a
-  start that needs the person's answer (an unfinished update, too little space,
-  a restore under way) waits for it in a card above Home's notice; a request
-  during an erase is dropped. The request is in memory only and Don't open
-  drops it. A failure is a banner over Android. The switch on the chooser governs Spotlight (Search) only: every
-  write to the index takes one ordered path (`AndroidAppsIndexWriter`), judged
-  against the switch and the catalog as they are when it runs, and a launch
-  finishes a write that failed. The tiles, the entities and the Siri phrase do
-  not follow the switch. The feature is in every build configuration. Tests:
-  `AndariumCore`'s `AppOpen*`, `AndroidApp*` suites, the hosted
-  `AndroidApps*Tests` and the preview's `AddToHomeUITests`
-  (`-screen add-home-*`, `Preview/AddToHomePreview.swift`).
 - **File browser** in Settings browses the guest's internal storage
   (`/storage/emulated/0/`, the guest Files app's root) and imports and exports
   files over the same channel, in a normal session and whatever the guest's USB
@@ -1426,14 +1237,7 @@ kernel's license files (never fetched; `--verify` compares the resource with
 them). A tooling test fails when the Andarium project embeds a framework, or an
 iOS device prefix contract declares a component, that no entry covers
 ([`docs/testing.md`](../docs/testing.md#andarium)). Adding a library therefore
-means adding its entry to the script's table and running it. The machine code
-translated from the Android libraries (`UmlArm64Aot.framework`) carries its own
-notices: the generator reads the AOT artifact's `licences.json`
-(`--aot-artifact`, else the accepted artifact installed below
-`.build/android/aot`) and lists each distinct notice once as "Translated system
-libraries", a page opened from the page of Android Open Source Project, with the
-paragraph the application's code carries above its row, in an application that
-embeds the framework only.
+means adding its entry to the script's table and running it.
 
 ## Languages
 
@@ -1443,9 +1247,9 @@ The strings are String Catalogs in `Localization/` (screens, permission texts,
 What's New notes) and in `AndariumCore`'s resources. The JIT texts are their own
 catalog, table `JIT`, which the App Store configuration leaves out of the
 bundle and its check asserts is absent. The texts of Send feedback, Buy me
-tokens, Review on the App Store, Follow developer on X and the App Store notice
-are catalogs of their own, tables `Feedback`, `TipJar`, `Review`, `FollowX` and
-`StoreLink`, built only where their feature is compiled in (`EXCLUDED_SOURCE_FILE_NAMES` in `Config/Andarium.xcconfig`);
+tokens, Review on the App Store and Follow developer on X are catalogs of their
+own, tables `Feedback`, `TipJar`, `Review` and `FollowX`, built only where their
+feature is compiled in (`EXCLUDED_SOURCE_FILE_NAMES` in `Config/Andarium.xcconfig`);
 the bundle check refuses a table, by its file name, in a product without its
 feature and asks for it in every language of one with it. The tip's words keep
 to its rules in each language (`scripts/check-tip-words.py`): no donation, plan
@@ -1467,8 +1271,7 @@ short quoted Chinese or Japanese name is not cut across two lines.
 --stringsdata <DerivedData>` fails on a key the code uses and a catalog lacks,
 or the reverse. It runs on a development build made with
 `FEEDBACK_ADDRESS=feedback@example.com`, the four `TIP_*` identifiers,
-`REVIEW_ID=id0000000000`, `STORE_LINK_ID=id0000000000`,
-`FOLLOW_X_HANDLE=example_handle` and
+`REVIEW_ID=id0000000000`, `FOLLOW_X_HANDLE=example_handle` and
 `ICP_NUMBER=示例ICP备00000000号-0A` (the output of
 `Andarium` and `AndariumPreview` together; one without a feature has none of its
 strings and fails) and on an App Store build with `--app-store`. A
@@ -1491,25 +1294,14 @@ additionally reads `KERNARIUM_ANDROID_ADB_AUTH`
 states the resolution; the earlier `KERNARIUM_RETINA_MODE` (`1` native, `0`
 one pixel to a point) is read where it is not stated.
 `ANDARIUM_THERMAL_STATE` (`nominal`, `fair`, `serious` or `critical`) stands
-for iOS's thermal state in the Simulator and in automation; only `critical`
-reaches the guest as heat. `ANDARIUM_HEAT_LIMIT` (`1` or `0`) states
-Settings' "When hot" for the run: `0` tells the guest nothing of the heat. A
-UI test's probe session (`ANDARIUM_INPUT_PROBE`) that states the thermal state
-runs the thermal session against a stand-in for the guest's HAL, and its log
-says what the guest would be told (`heat told <severity>`).
+for iOS's thermal state in the Simulator and in automation; `serious` and
+`critical` reach the guest as heat.
 `ANDARIUM_REVIEW_ASK_SECONDS` and `ANDARIUM_REVIEW_ASK_RESET=1` set the rating
 prompt's counter and clear its record, in a build that has the prompt
 ([Rating prompt](#rating-prompt)).
 `ANDARIUM_FOLLOW_ORIENTATION` (`1` or `0`) states whether the guest follows the
 device's orientation, where the device's idiom (an iPhone follows) would
 otherwise decide.
-`ANDARIUM_HAPTICS=0` plays none of the guest's haptics on the device for that
-launch, as with the Haptics switch off, and leaves the stored switch alone; any
-other value states nothing. A launch that states only it is still the person's
-own. The device runners state it unless a run tests haptics (`--haptics`), and
-a hosted test on an iPhone gives it as `TEST_RUNNER_ANDARIUM_HAPTICS=0`. It
-silences the side keys' and rulers' own touch feedback too, which the Haptics
-switch does not govern; a game controller's rumble is governed by neither.
 `ANDARIUM_INPUT_PROBE=1` is the UI tests' launch: the session opens at once
 with no guest behind it, and what the guest's keyboard and mouse would receive,
 and the touches that reach its touchscreen, go to one accessibility element
@@ -1523,12 +1315,6 @@ nothing.
 session a scripted list of two made-up old apps in place of the image's command:
 `apps` lists them (one on and open), `refuse` also refuses every change, `none` is
 an image without the command.
-`ANDARIUM_ANDROID_APPS_PROBE=1`, with the probe, gives its session the played list of
-made-up Android apps that Add to Home Screen's preview screens use, in the cache and
-the App Shortcuts, so that Apple's Shortcuts shows their tiles under Andarium.
-`ANDARIUM_TEXT_MESSAGES=1` turns on the Text message entrance that the device
-application holds back until an accepted release image carries the service
-(`Capabilities.device`); tests and proof images use it.
 `ANDARIUM_GUEST_INSTANCE=<name>` runs an isolated guest under
 `Library/TestGuests/<name>`, for tests that need a fresh guest while the
 ordinary guest or its pending update must be preserved. A file `free-space-mib`

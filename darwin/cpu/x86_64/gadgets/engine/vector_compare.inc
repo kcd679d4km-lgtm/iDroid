@@ -59,7 +59,8 @@ gadget vector_\name\()_\width\()_rr
 gadget vector_\name\()_\width\()_rm
 	effective_address
 	mov x25, x7
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8), cross=Lx86_vector_compare_cross\@
+	page_cross_check (\width / 8), Lx86_vector_compare_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	ldr \fp_register\()1, [x7]
 	b Lx86_vector_compare_loaded\@
 Lx86_vector_compare_cross\@:

@@ -304,6 +304,7 @@ KERNARIUM_REMOVED_PACKAGES := \
     TeleService \
     Telecom \
     TelecomShim \
+    TelephonyProvider \
     android.hardware.biometrics.face-service.default \
     android.hardware.biometrics.fingerprint-service.default \
     android.hardware.motioncontext-service.default \
@@ -345,6 +346,7 @@ KERNARIUM_REMOVED_PACKAGES := \
     gsi_tool \
     gsid \
     android.hardware.health-service.cuttlefish_recovery \
+    messaging \
     pmg_daemon \
     sample_camera_extensions.xml \
     snapshotctl \
@@ -366,14 +368,6 @@ PRODUCT_PACKAGES_EXCLUDE += \
     libGoldfishProfiler \
     metrics_helper \
     sleep
-
-# TalkBack, Android's screen reader, and eSpeak NG, its voice: the image's
-# only speech engine. Both are built from source, from the pinned trees that
-# prepare-sources.sh materializes at external/talkback and external/espeak-ng
-# (third_party/accessibility).
-PRODUCT_PACKAGES += \
-    TalkBack \
-    eSpeakNG
 
 # The keyboard (LatinIME) and ThemePicker come from the LineageOS product
 # chain. resize2fs grows the compact userdata filesystem
@@ -533,16 +527,6 @@ PRODUCT_PACKAGES += KernariumWifiOverlay
 # sets the home pin size to zero and leaves the WebView pin as it was.
 PRODUCT_PACKAGES += KernariumPinnerOverlay
 
-# Text messages come from the host only: the Andarium application sends one
-# over its own vsock port to KernariumSms (sms/), which delivers it as the radio
-# stack delivers one from the network. Messaging is the SMS application and
-# TelephonyProvider stores the messages. The product declares
-# android.hardware.telephony.messaging and config_sms_capable, which the SMS
-# role needs, and no telephony: nothing in the guest can send a message.
-# TelephonyProvider requests MANAGE_APP_OPS_MODES itself (route p0034), which
-# TeleService otherwise brings to their shared uid.
-PRODUCT_PACKAGES += KernariumSms messaging TelephonyProvider
-
 # Once boot completes, a script saves the virtual Wi-Fi network (VirtWifi, open)
 # the first time, and saves it again on a boot before the station first joins it
 # that finds Wi-Fi on and nothing joined. It does not turn Wi-Fi on, and a network
@@ -584,15 +568,6 @@ PRODUCT_PACKAGES += kernarium_keyboard_default_script
 # a Java tool, so the package manager can give the labels in the guest's language.
 PRODUCT_PACKAGES += kernarium_oldapp
 
-# Andarium's Add to Home Screen needs the launcher applications with their labels (in the guest's
-# language) and icons, and a safe way to start one. The adb shell user runs this command: a Java tool
-# started through app_process like kernarium_oldapp, so it needs no service and no permission of its own
-# (overlay/app_shortcuts). It draws no icon: KernariumIcons (overlay/app_icons) does, in an isolated process
-# behind a provider that only the shell user may use. That application is an ordinary one, signed with the
-# default key and with no SELinux rule of its own.
-PRODUCT_PACKAGES += kernarium_apps
-PRODUCT_PACKAGES += KernariumIcons
-
 # A Vulkan hardware-buffer import check: it fills gralloc buffers of several
 # formats and widths through the CPU, imports each into Vulkan and reads it
 # back, so a row pitch the driver cannot import or the renderer misreads fails
@@ -631,7 +606,7 @@ PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_egl_confi
 # software one. The service brings the vendor variants of the libraries it
 # links, the plugin store among them; naming one of those here would install its
 # core variant under /system, which the generic system artifact path
-# requirement refuses. The XML lists the encoders and the HEVC, H.264 and VP9
+# requirement refuses. The XML lists the encoders and the HEVC and H.264
 # decoders, and the properties enable exactly those components; it also updates
 # the limits of the software HEVC and VP9 decoders, which advertise less than
 # they decode, to 3840x2160. The store
@@ -658,7 +633,6 @@ PRODUCT_VENDOR_PROPERTIES += \
     ro.vendor.v4l2_codec2.video_pixel_rate=108000000 \
     ro.vendor.v4l2_codec2.decoder.supported.h264=true \
     ro.vendor.v4l2_codec2.decoder.supported.hevc=true \
-    ro.vendor.v4l2_codec2.decoder.supported.vp9=true \
     ro.vendor.v4l2_codec2.decode_concurrent_instances=4 \
     ro.vendor.v4l2_codec2.video_decode_pixel_rate=456192000
 

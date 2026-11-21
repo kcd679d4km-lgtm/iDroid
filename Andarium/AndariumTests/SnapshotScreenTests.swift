@@ -230,12 +230,7 @@ struct SnapshotWordsTests {
 /// The screens' model with a fake driver: each flow the sheet offers, the
 /// refusals and the busy states.
 @MainActor
-final class SnapshotsModelTests {
-    // The model of a test adopts the process's App Intent hub, which the suites
-    // of Add to Home Screen replace: these take turns with them (`AndroidAppsHubLock`).
-    init() async { await AndroidAppsHubLock.shared.acquire() }
-    deinit { Task { await AndroidAppsHubLock.shared.release() } }
-
+struct SnapshotsModelTests {
     private struct Setup {
         let model: AppModel
         let driver: FakeSnapshotDriver

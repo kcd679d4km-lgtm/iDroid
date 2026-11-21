@@ -2,7 +2,6 @@
 #pragma once
 
 #include "cpu/arm64/aarch32/guest_key.hpp"
-#include "cpu/arm64/code_synchronization.hpp"
 #include "cpu/arm64/fp_environment.hpp"
 #include "cpu/engine.hpp"
 #include "memory/static_guest_memory.hpp"
@@ -139,22 +138,15 @@ template<typename Entry, bool PollCallback, typename Executor>
 	if (!executor.begin_execution(
 		    request.generation, Entry::guest_pc(request.cpu.pc)))
 		return {.reason = ExitReason::fatal};
-	/* An arm64 run registers its generation as a holder of every frame it
-	 * fetches code from, so that a code synchronization by another process
-	 * reaches it (memory/mmu/code_holders.hpp). The x86 engines share the
-	 * memory and never run through this loop, so they leave it off. */
-	memory.set_code_holder_registration(true);
 	struct ExecutionScope final {
 		Executor &executor;
-		::uml::memory::StaticGuestMemory &memory;
 
 		~ExecutionScope() noexcept
 		{
-			memory.set_code_holder_registration(false);
 			executor.end_execution();
 		}
 	};
-	[[maybe_unused]] const ExecutionScope execution_scope{executor, memory};
+	[[maybe_unused]] const ExecutionScope execution_scope{executor};
 	executor.set_single_step(request.single_step);
 	Entry::prepare(executor, request.cpu);
 	const auto interrupt_pending = [&]() noexcept {
@@ -193,7 +185,6 @@ template<typename Entry, bool PollCallback, typename Executor>
 	};
 
 	std::size_t retired = 0;
-	discard_unmapped_code_synchronization();
 	try {
 		for (;;) {
 			if (interrupt_pending())
@@ -224,20 +215,6 @@ template<typename Entry, bool PollCallback, typename Executor>
 				return finish(ExitReason::fatal, retired);
 			}
 			retired += block_instructions;
-			/* An IC IVAU that named an address the address space maps
-			 * nothing at faults as a load does, so that the kernel maps
-			 * the page and the instruction publishes the code change of
-			 * the frame it names. The block ended at the instruction, with
-			 * the PC after it: report the fault at the instruction, which
-			 * has not retired. */
-			if (std::uint64_t unmapped = 0;
-			    take_unmapped_code_synchronization(unmapped)) [[unlikely]] {
-				request.cpu.pc -= sizeof(std::uint32_t);
-				if (retired != 0)
-					--retired;
-				return finish(ExitReason::memory_fault, retired, unmapped,
-					::uml::memory::MemoryAccess::read);
-			}
 			if (executor.preempted())
 				return finish(ExitReason::interrupt, retired);
 			if (request.boundary != nullptr &&

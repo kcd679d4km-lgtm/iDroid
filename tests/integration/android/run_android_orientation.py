@@ -1349,39 +1349,27 @@ def start_guest(options: argparse.Namespace, adb: str, private: pathlib.Path, *,
         *getattr(options, "extra_arguments", ()),
     ]
     log = private / "emulator.log"
-    with log.open("wb") as stream:
-        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=stream, stderr=stream,
-                                   start_new_session=True, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+    stream = log.open("wb")
+    process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=stream, stderr=stream,
+                               start_new_session=True, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+    stream.close()
     serial = f"127.0.0.1:{options.adb_port}"
-    # The emulator is this function's until it returns the guest: the caller's cleanup knows a guest only
-    # from that return, so a failure or an interrupt (a timeout, Ctrl-C) before it stops the emulator here.
-    try:
-        guest = Guest(adb, serial, process, log, vsock_forward_port(log, process, MOTION_PORT))
-        host = Host(guest.forward_port)
-        holder["host"] = host
-        if early is not None:
-            holder["early"] = EarlyHost(host, early, options.boot_timeout)
-            holder["early"].start()
-        boot_android.wait_for_adb(adb, serial, process, options.boot_timeout)
-        if not boot_android.wait_for_boot_completed(adb, serial, process, options.boot_timeout):
-            raise Failure("Android did not reach sys.boot_completed")
-        guest.boot_completed_at = time.monotonic()
-        guest.early_log = hal_log_lines(guest.adb_run("logcat", "-d", "-b", "all", timeout=90).stdout)
-        boot_android.android_instance.booted(instance, identity)
-        if provision and not options.instance:
-            boot_android.provision_guest(adb, serial)
-        print(f"booted; settling for {SETTLE_SECONDS} s", flush=True)
-        time.sleep(SETTLE_SECONDS)
-    except BaseException:
-        # The host that was to talk to this guest ends with it.
-        early_host = holder.get("early")
-        if early_host is not None:
-            early_host.stop.set()
-        if "host" in holder:
-            holder["host"].stop()
-        boot_android.disconnect_adb(adb, serial)
-        boot_android.stop_guest(process)
-        raise
+    guest = Guest(adb, serial, process, log, vsock_forward_port(log, process, MOTION_PORT))
+    host = Host(guest.forward_port)
+    holder["host"] = host
+    if early is not None:
+        holder["early"] = EarlyHost(host, early, options.boot_timeout)
+        holder["early"].start()
+    boot_android.wait_for_adb(adb, serial, process, options.boot_timeout)
+    if not boot_android.wait_for_boot_completed(adb, serial, process, options.boot_timeout):
+        raise Failure("Android did not reach sys.boot_completed")
+    guest.boot_completed_at = time.monotonic()
+    guest.early_log = hal_log_lines(guest.adb_run("logcat", "-d", "-b", "all", timeout=90).stdout)
+    boot_android.android_instance.booted(instance, identity)
+    if provision and not options.instance:
+        boot_android.provision_guest(adb, serial)
+    print(f"booted; settling for {SETTLE_SECONDS} s", flush=True)
+    time.sleep(SETTLE_SECONDS)
     return guest
 
 

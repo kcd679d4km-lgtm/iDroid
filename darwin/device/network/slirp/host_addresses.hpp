@@ -22,8 +22,6 @@
 #include <optional>
 #include <vector>
 
-struct ifaddrs;
-
 namespace uml::network {
 
 using HostIpv4 = std::array<std::uint8_t, 4>;
@@ -42,24 +40,11 @@ public:
 	/* Replaces the IPv4 table with `addresses` (host byte order), in any
 	 * order and with repeats. 0.0.0.0 and 255.255.255.255 are not kept. */
 	void assign_ipv4(std::vector<std::uint32_t> addresses);
-	/* As above, with the broadcast addresses of the interfaces given apart:
-	 * `contains` knows them, `assigned` does not. */
-	void assign_ipv4(std::vector<std::uint32_t> assigned,
-			 std::vector<std::uint32_t> broadcast);
 
 	/* Whether an interface of the host holds `address` or, for an interface
 	 * with a broadcast address, that broadcast address, which a local
 	 * socket bound to every address receives as well. */
 	[[nodiscard]] bool contains(const HostIpv4 &address) const noexcept;
-
-	/* Whether an interface of the host holds `address` itself: what a
-	 * socket that connected from it needs to still be there. A broadcast
-	 * address is no one's source: another interface's broadcast address
-	 * must not keep a departed unicast address alive. */
-	[[nodiscard]] bool assigned(const HostIpv4 &address) const noexcept;
-
-	/* Whether `earlier` holds an assigned address that this table lacks. */
-	[[nodiscard]] bool lost_since(const HostAddresses &earlier) const noexcept;
 
 	[[nodiscard]] bool empty() const noexcept { return !all_ && ipv4_.empty(); }
 	[[nodiscard]] std::size_t size() const noexcept { return ipv4_.size(); }
@@ -67,14 +52,9 @@ public:
 	[[nodiscard]] bool operator==(const HostAddresses &) const noexcept = default;
 
 private:
-	/* Every address `contains` knows, and the assigned ones among them. */
 	std::vector<std::uint32_t> ipv4_;
-	std::vector<std::uint32_t> assigned_;
 	bool all_{};
 };
-
-/* The table of an interface list, as the system gives it. */
-[[nodiscard]] HostAddresses host_addresses_from(const ifaddrs *list);
 
 /* Every address the system lists for an interface now, up or down: a local
  * address is local whatever the state of its interface. Nothing when the

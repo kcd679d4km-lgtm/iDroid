@@ -134,7 +134,7 @@ struct Ruler: View {
         }
         .frame(height: 52)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-        .interfaceFeedback(.selection, trigger: index)
+        .sensoryFeedback(.selection, trigger: index)
         .accessibilityElement()
         .accessibilityLabel(accessibilityName)
         .accessibilityValue((valueText ?? label)(index))

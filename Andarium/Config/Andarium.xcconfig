@@ -9,9 +9,7 @@
 // feedback and Follow developer on X and none of the other three: Buy me
 // tokens, Review on the App Store and the ICP filing number have a value in
 // AppStore alone, and a TestFlight build empties them whatever the local files
-// hold (and so the pieces that ride with Buy me tokens). TestFlight alone has
-// the App Store notice (below), which reads the identifier Review on the App
-// Store reads and has a value in no other configuration.
+// hold (and so the pieces that ride with Buy me tokens).
 //
 // The What's New notes have two tracks, each its own file of Shared: the beta
 // track (WhatsNew.json) for Debug, Release and TestFlight, and the App Store
@@ -51,7 +49,7 @@ FEEDBACK_ADDRESS[config=TestFlight] = $(FEEDBACK_RECEIVER)
 FEEDBACK_ARRANGED_ = NO_FEEDBACK_MAIL
 FEEDBACK_CONDITION = $(FEEDBACK_ARRANGED_$(FEEDBACK_ADDRESS:identifier):default=FEEDBACK_MAIL)
 
-SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) $(FEEDBACK_CONDITION) $(TIP_JAR_CONDITION) $(REVIEW_CONDITION) $(STORE_LINK_CONDITION) $(FOLLOW_X_CONDITION) $(SHEET_X_CONDITION) $(ICP_CONDITION) $(WHATS_NEW_CONDITION)
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) $(FEEDBACK_CONDITION) $(TIP_JAR_CONDITION) $(REVIEW_CONDITION) $(FOLLOW_X_CONDITION) $(SHEET_X_CONDITION) $(ICP_CONDITION) $(WHATS_NEW_CONDITION)
 
 // Info.plist is preprocessed, and holds the address only where FEEDBACK_MAIL is defined.
 FEEDBACK_PLIST_ = FEEDBACK_NO_MAIL=1
@@ -99,7 +97,7 @@ TIP_JAR_PLIST_DEFINITION = $(TIP_JAR_PLIST_$(TIP_JAR_NAMED):default=TIP_JAR=1)
 // Review on the App Store exists only in an AppStore build whose maker has the
 // ignored Review.local.xcconfig beside this file (Review.local.xcconfig.example)
 // with the app's App Store identifier, so a fork, a sideload, or a Debug,
-// Release or TestFlight build carries neither the item nor its address (nor
+// Release or TestFlight build, carries neither the item nor the address (nor
 // the rating prompt, which shares the switch). REVIEW_ID is that identifier in
 // AppStore and empty elsewhere; a non-empty one adds the APP_REVIEW compilation
 // condition and puts the identifier in Info.plist. The tests state
@@ -124,34 +122,6 @@ REVIEW_CONDITION = $(REVIEW_ARRANGED_$(REVIEW_NAMED):default=APP_REVIEW)
 REVIEW_PLIST_ = APP_REVIEW_NONE=1
 REVIEW_PLIST_DEFINITION = $(REVIEW_PLIST_$(REVIEW_NAMED):default=APP_REVIEW=1)
 
-// The App Store notice (a card first on Home and on Welcome, and a row in Info,
-// that point a TestFlight tester to the App Store version) exists only in a
-// TestFlight build whose maker has the same ignored Review.local.xcconfig, and
-// reads its identifier, so a fork, a sideload, or an AppStore, Debug or Release
-// build carries neither the notice nor the address. STORE_LINK_ID is that
-// identifier in TestFlight and empty elsewhere, and has its own Info.plist key:
-// REVIEW_ID stays AppStore's alone, so a TestFlight build has no Review item
-// and no rating prompt. A non-empty identifier adds the TESTFLIGHT_STORE_LINK
-// compilation condition and puts the identifier in Info.plist. The tests and
-// the screen captures state STORE_LINK_ID=id0000000000 on the xcodebuild
-// command line to build the notice into a Debug build; the bundle check
-// refuses any other identifier outside TestFlight, and the arranged one outside
-// Debug, and any in AppStore. AndariumPreview sets it empty itself, so it takes
-// that arrangement alone and never the local file's identifier.
-STORE_LINK_ID =
-STORE_LINK_ID[config=TestFlight] = $(REVIEW_APP_ID)
-
-// An empty identifier names the setting STORE_LINK_ARRANGED_ and gets
-// NO_TESTFLIGHT_STORE_LINK; any other lands on an undefined name and gets
-// TESTFLIGHT_STORE_LINK.
-STORE_LINK_ARRANGED_ = NO_TESTFLIGHT_STORE_LINK
-STORE_LINK_NAMED = $(STORE_LINK_ID:identifier)
-STORE_LINK_CONDITION = $(STORE_LINK_ARRANGED_$(STORE_LINK_NAMED):default=TESTFLIGHT_STORE_LINK)
-
-// Info.plist holds the identifier only where TESTFLIGHT_STORE_LINK is defined.
-STORE_LINK_PLIST_ = TESTFLIGHT_STORE_LINK_NONE=1
-STORE_LINK_PLIST_DEFINITION = $(STORE_LINK_PLIST_$(STORE_LINK_NAMED):default=TESTFLIGHT_STORE_LINK=1)
-
 // The What's New notes a build bundles and reads. BETA is the track of Debug,
 // Release and TestFlight and APP_STORE the track of AppStore; the other
 // track's file is left out of the bundle, and the matching compilation
@@ -172,7 +142,7 @@ APP_ICON_ABSENT_DuskJade = DuskEmber.icon
 APP_ICON_ABSENT_DuskEmber = DuskJade.icon
 ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO
 
-// The Feedback, TipJar, Review and StoreLink string tables are each compiled only where
+// The Feedback, TipJar and Review string tables are each compiled only where
 // their feature is. An empty value names the setting FEEDBACK_CATALOG_ (and so
 // on) and excludes the catalog; any other lands on an undefined name and
 // excludes nothing. The project's AppStore and TestFlight setting of this name
@@ -180,7 +150,6 @@ ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO
 FEEDBACK_CATALOG_ = Feedback.xcstrings
 TIP_JAR_CATALOG_ = TipJar.xcstrings
 REVIEW_CATALOG_ = Review.xcstrings
-STORE_LINK_CATALOG_ = StoreLink.xcstrings
 
 // The developer the maker names, in the ignored Developer.local.xcconfig
 // (Developer.local.xcconfig.example): a name, the handles of a GitHub and an X
@@ -283,7 +252,7 @@ FOLLOW_X_UNUSED_local = XLogoGlyph.xcassets
 SHEET_ARTWORK_UNUSED_ = GitHubLogoLocal.xcassets DeveloperAvatarLocal.xcassets
 SHEET_ARTWORK_UNUSED_local = GitHubLogoGlyph.xcassets DeveloperAvatarGlyph.xcassets
 
-EXCLUDED_SOURCE_FILE_NAMES = $(FEEDBACK_CATALOG_$(FEEDBACK_ADDRESS:identifier):default=) $(TIP_JAR_CATALOG_$(TIP_JAR_NAMED):default=) $(REVIEW_CATALOG_$(REVIEW_NAMED):default=) $(STORE_LINK_CATALOG_$(STORE_LINK_NAMED):default=) $(FOLLOW_X_ABSENT_$(FOLLOW_X_HANDLE:identifier):default=) $(X_LOGO_ABSENT_$(X_LOGO_NAMED):default=) $(GITHUB_LOGO_ABSENT_$(SHEET_DEVELOPER_GITHUB:identifier):default=) $(AVATAR_ABSENT_$(SHEET_DEVELOPER_NAME:identifier):default=) $(FOLLOW_X_UNUSED_$(FOLLOW_X_LOGO_SOURCE:identifier):default=) $(SHEET_ARTWORK_UNUSED_$(SHEET_ARTWORK_SOURCE:identifier):default=) $(WHATS_NEW_ABSENT_$(WHATS_NEW_TRACK)) $(APP_ICON_ABSENT_$(APP_ICON_NAME))
+EXCLUDED_SOURCE_FILE_NAMES = $(FEEDBACK_CATALOG_$(FEEDBACK_ADDRESS:identifier):default=) $(TIP_JAR_CATALOG_$(TIP_JAR_NAMED):default=) $(REVIEW_CATALOG_$(REVIEW_NAMED):default=) $(FOLLOW_X_ABSENT_$(FOLLOW_X_HANDLE:identifier):default=) $(X_LOGO_ABSENT_$(X_LOGO_NAMED):default=) $(GITHUB_LOGO_ABSENT_$(SHEET_DEVELOPER_GITHUB:identifier):default=) $(AVATAR_ABSENT_$(SHEET_DEVELOPER_NAME:identifier):default=) $(FOLLOW_X_UNUSED_$(FOLLOW_X_LOGO_SOURCE:identifier):default=) $(SHEET_ARTWORK_UNUSED_$(SHEET_ARTWORK_SOURCE:identifier):default=) $(WHATS_NEW_ABSENT_$(WHATS_NEW_TRACK)) $(APP_ICON_ABSENT_$(APP_ICON_NAME))
 
 // The filing number at the bottom of Info (China's ICP filing) is the same
 // file's DEVELOPER_ICP_NUMBER, with a switch of its own: it needs no tip, review

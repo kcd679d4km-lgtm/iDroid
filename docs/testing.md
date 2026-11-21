@@ -289,14 +289,9 @@ On a connected iOS device, Android runs go through Andarium
 (`tests/perf/run_ios_device_android.py`, [`Andarium/README.md`](../Andarium/README.md#automation))
 and Kernarium's device runners keep Linux; both share
 `tests/integration/support/ios_device.py`, and their tooling tests run against
-fakes, so no device is needed. A device run keeps the phone's haptics off
-(`ANDARIUM_HAPTICS=0`) unless it tests them: `--haptics`, on
-`run_ios_device_android.py`, `ipad-automation.py launch` and `activate` (which
-refuses to start a stopped Andarium without it) and `ios_jit_debugger.py`,
-leaves the switch to the person. Kernarium plays no haptics. A device run
-starts with at least five free slots of JetsamEvent reports and of each tested
-process's crash reports, since iOS drops the next report once a kind is full:
-otherwise the
+fakes, so no device is needed. A device run starts with at least five free
+slots of JetsamEvent reports and of each tested process's crash reports, since
+iOS drops the next report once a kind is full: otherwise the
 [preflight](../tests/integration/support/ios_device_reports.py) copies the
 reports listed at the start to a new directory on the Mac, outside every
 checkout, checks each copy by type and size (not byte for byte), and only then
@@ -418,8 +413,7 @@ mock data, `Andarium` the device application,
 [targets](../Andarium/README.md#targets)); `AndariumTests` is
 hosted in `Andarium` and runs on an iPad, in the Simulator and as an iPad app on
 an Apple silicon Mac (`xcodebuild test -scheme Andarium -only-testing:AndariumTests
-FEEDBACK_ADDRESS=feedback@example.com REVIEW_ID=id0000000000 STORE_LINK_ID=id0000000000
-FOLLOW_X_HANDLE=example_handle
+FEEDBACK_ADDRESS=feedback@example.com REVIEW_ID=id0000000000 FOLLOW_X_HANDLE=example_handle
 TIP_LITE=com.example.andarium.tip.lite TIP_PRO=com.example.andarium.tip.pro
 TIP_MAX=com.example.andarium.tip.max TIP_ULTRA=com.example.andarium.tip.ultra
 SHEET_DEVELOPER_NAME=example SHEET_DEVELOPER_GITHUB=example SHEET_DEVELOPER_X=example_handle
@@ -438,9 +432,7 @@ map, backup attribute) on a small sparse file and prints their answers on a
 `SNAPSHOT_FILE_APIS` line; a device reports a refused call there and does not
 fail on it. `SnapshotsModelTests` and `SnapshotWordsTests` check the snapshot
 screens' flows, refusals and words on a fake driver. `SendFeedbackScreenTests`,
-`SendFeedbackStartLogTests` (the sheet's tip and start log during a start),
-`SendFeedbackAskScreenTests` (Send's question about a bug report and the
-pages of its row) and
+`SendFeedbackStartLogTests` (the sheet's tip and start log during a start) and
 `SendFeedbackFilesScreenTests` (files from Files: in place, the copy of a file
 that cannot be used there, the access held and stopped once) exist only in a
 build with `FEEDBACK_ADDRESS=feedback@example.com` on the command line, as the
@@ -457,18 +449,10 @@ StoreKit's test session over `AndariumTests/TipJar.storekit`, example
 identifiers only, never the App Store), and `ReviewScreenTests`,
 `ReviewAskFlowTests` and `ReviewAskStoreTests` `REVIEW_ID`
 ([Review on the App Store](../Andarium/README.md#review-on-the-app-store); the
-system's rating prompt is never asked for), and `StoreNoticeTests` `STORE_LINK_ID`
-([App Store notice](../Andarium/README.md#app-store-notice); the system's `open`
-is replaced, so no address opens). `HomeMenuTests` (Home's toolbar
+system's rating prompt is never asked for). `HomeMenuTests` (Home's toolbar
 menu) exist with any of Send feedback, Review and Buy me tokens, and
 `HomePlainInfoTests` (the plain Info button) only with none
 ([Home toolbar menu](../Andarium/README.md#home-toolbar-menu)).
-`GuestSmsTests`, `GuestSmsChannelTests` and `TextMessageNoticeTests` (`AndariumCoreTests`)
-read the golden bytes of the text message channel and its payload, which the guest
-service's tests read too, and run the exchange over socket pairs and a scripted
-system (deadline, cancellation); the hosted `TextMessageTests` play the bar over a
-fake driver: every state, the durable notice at each point where a session can end,
-and what VoiceOver has been told.
 `AndariumCoreTests` holds the tip sheet's states and the rating rule, counter
 and record as pure logic, and the state of the no-Google-apps notice (the panel
 on a first start and on the retry of a first Android boot that did not finish,
@@ -569,42 +553,7 @@ the Simulator Android runtime packaged and the system image staged
 ([Build](../Andarium/README.md#build)), and it takes about a minute to reach
 Android (the test allows ten minutes to create the machine and 25 for the
 boot). Its other test, in a build with Send feedback, reaches the Send feedback
-line from a probe session's Settings. `FeedbackAskUITests` (the same build) adds
-`ANDARIUM_FEEDBACK_PROBE` to the probe session, which gives the sheet mail that can be
-sent, a composer stand-in and the preview's bug report, and walks Send's
-question, Create bug report, the pages of the report's row and Send without
-bug report. `AddToHomeUITests` (`ANDARIUM_ANDROID_APPS_PROBE`, a played list of
-Android apps) walks Settings > Apps > Add to Home Screen to the guide and presses
-Apple's Shortcuts button: Shortcuts opens on Andarium's page with a tile for each
-app.
-
-`AndariumPreviewUITests` drives `AndariumPreview` in the Simulator
-(`xcodebuild test -scheme AndariumPreview`): the screens it lists pass the
-accessibility audit for element descriptions and traits once the sheet or card
-they open on is up; the switch for Android's screen reader, last in the
-session's Settings, shows off, on, not in the system image, couldn't check,
-turning on, didn't turn on and the file transfer that holds it; and under
-VoiceOver a card asks before the screen reader is turned on, at a first start
-too, starts with its title, and names the edge the side keys are on, as the
-Settings footer does after the keys are moved. The Simulator has no VoiceOver,
-so these tests drive the interface and read no speech. The hosted
-`TalkBackSwitchTests` run the model against a driver that can delay and fail
-(and fail after a partial write): overlapping reads and changes, an operation
-that the session's end cancels, or that answers after it, the card, the
-display's direct touch, the loop that reads, and what VoiceOver is told (once
-per event, with the way back; the run start's sentence at high priority, with
-the card and the display's focus waiting for its end, or for the bound; the
-news that the screen reader is on at high priority, said where something covers
-the display or after the person turned it on, and left to the display's own
-words where the display takes the focus at a start; the display with no value
-until Android has been read); a wait in them fails where what it waited
-for did not happen. `GuestDisplayAccessibilityTests` read the display's
-accessibility structure: one element with the screen reader off, and with it on
-a container of one direct-touch element that carries the words, covers the
-display and follows its layout. `ScreenReaderAdapterTests` run the adapter over
-a shell that answers as told, and `ScreenReaderShellTests` in `andarium-core`
-run the commands in a real shell with fake `am`, `pm` and `settings` tools that
-keep a store per user.
+line from a probe session's Settings.
 
 The folding iPhone's layout ([devices](../Andarium/README.md#devices)) is
 `andarium-core`'s `FoldLayoutTests`, one test per pose of the iPhone Duo.
@@ -656,17 +605,10 @@ rejects the forbidden terms of each language and a token amount in the
 `TipJar` table, and requires the statement that a tip is voluntary, one-time
 and the features free; the bundle check also covers the developer header's
 keys and artwork),
-the App Store notice's build conditions (`andarium-store-link-configuration`: the
-resolved build settings of each configuration build it into TestFlight alone, and
-`AndariumCore`'s `StoreLinkTests` hold its address, its dismissal record and its
-visibility rule),
 document pickers' build conditions (`andarium-document-pickers`: the App Store
 configuration opens files in place, every other presents the copy-mode picker,
 and an in-place importer anywhere else is in an App Store branch or a named
-exception), the application's own touch feedback
-(`andarium-interface-feedback`: no view plays it around the one modifier; that
-a launch silencing haptics silences it, on both model paths of a launch, is
-held by the hosted `LaunchEnvironmentTests` and `CapabilitiesFlowTests`),
+exception),
 the Acknowledgements resource (`andarium-acknowledgements`) and the stand-in
 debugger that serves the JIT's request for executable memory on a device
 (`andarium-ios-jit-debugger`). The JIT's region route has host tests that run
@@ -697,13 +639,11 @@ starts the next only once the old one is shown to be dead (three reads in a row
 that all worked and all showed the same beat), and otherwise replaces nothing
 and ends with a status and state of its own that `status` reports (approval the
 device may have asked for, a heartbeat it cannot read, a remainder of the old
-host that is not shown gone). A replacement start that the device's connection
-drops under, before its runner came up or after its test started, is made again
-once the device answers (four starts in all). The refusal for approval stays in
-the state directory until a host serves, and a device with no host to read is
-the first `start`'s job. A command in flight when its host is replaced is not
-repeated, and its sender gets status 3. Run it in a terminal, detached
-with `watch --detach`, or as a job manager's job (`watch --print-launchd-job
+host that is not shown gone). The refusal for approval stays in the state
+directory until a host serves, and a device with no host to read is the first
+`start`'s job. A command in flight when its host is replaced is not repeated,
+and its sender gets status 3. Run it in a terminal, detached with
+`watch --detach`, or as a job manager's job (`watch --print-launchd-job
 <label>` prints a launchd job that launchd never restarts, and creates nothing:
 make its log directory first; launchd must be able to open the job file and the
 log, so both belong on a volume with ownership enabled, and `--launchd-log`
@@ -801,246 +741,6 @@ cannot hold has focused tests whose headers say what they check
 AArch32 JIT tests exist only on macOS). A guest `SIGILL` is a correctness
 blocker in every one of them.
 
-- `arm64-aot-differential` exists only in a build configured with
-  `UML_AOT_IMAGE`, `UML_AOT_FSCK_EROFS` and `UML_AOT_DIAGNOSTICS`, and so does
-  `arm64-aot-reporter`: a unit tree configured without them has neither row,
-  and its `check-unit` says nothing about the differential of ahead-of-time
-  code (a tree with an artifact has the component only where a launch selects
-  it for the release the artifact was made from). `arm64-aot-selection` runs
-  where a build has the component: on by default, off by `DARWIN_UML_AOT=0`, and a launch's word beats
-  the environment, and it binds the launch to the release (the same release is
-  on; another release ID, manifest digest or system-partition digest is off
-  under `auto` and fails under `on`; a launch that states no release has no
-  component and no tables; a restart in the process decides again, so a
-  release the blob no longer fits runs on the engine), each case in a process
-  of its own;
-  `emulator-options` holds the `--aot=` and `--aot-release=` parsing and
-  `android-release-identity` the launcher's reading of the release identity.
-  `aot-archive-switch-gates-explicit-artifacts` (tooling) holds the archive
-  switch to the App Store runtime's configure: an explicit artifact needs the
-  descriptor's `yes`. `arm64-aot-release-artifact` holds the artifact check
-  to what it must refuse (another release, partition, blob, tool or library
-  list). The differential runs functions of every rewritten library through
-  the gadget engine with and without ahead-of-time code and requires the same
-  guest state, memory, ending event and exception syndrome, and the same
-  registers, flags, vector registers and memory at every fault. The unhappy
-  paths are part of it:
-  single step, the preemption bound, two load biases, other or changed bytes
-  (including one changed bit anywhere in a page whose 64-bit digest is made
-  to match), pages that appear or change after their neighbours were
-  verified, edges
-  into such pages, more code changes than the history keeps, more libraries
-  than the binder holds, tagged pointers, page crossings, forced refills and
-  a shootdown by another thread while rewritten code loops, and another
-  address space of the guest that changes the bytes of a frame whose page
-  rewritten code has run, by a store and code synchronization and by the
-  kernel's write, which names the address or the frame it holds. The runs use the
-  product's code layout; `UML_AOT_COUNT_RETIRED=ON` rewrites the libraries to
-  count each instruction an entry runs, which checks the budget's bound
-  exactly (`arm64-aot-tools` builds that layout on the generated library in
-  every run, so it cannot stop assembling unnoticed).
-  A generated library holds the forms of the ordered, atomic, memory copy and
-  set, and Advanced SIMD structure classes. Each form runs from random
-  states; compare-and-swap runs with every outcome and permission; loops that
-  update one cell run from rewritten code and the engine on two vCPUs; copies
-  and sets also run from directed states, including the epilogue started
-  alone in states a signal handler can leave; and structure accesses run over
-  a page boundary with one page cached and the other not.
-  The boot image's OAT files are rewritten libraries like the others and run
-  in the same loops; a second generated file has their shape (no unwind
-  table, methods named by `.gnu_debugdata`, methods that touch) and holds each
-  kind of direct branch that reaches below its own first byte, into another
-  instance mapped lower, which a row runs against the engine.
-  A scan runs the engine from every word of every rewritten function and
-  requires that a word it rejects as an illegal instruction in every state is
-  one the rewriter leaves to it (the data a method's code holds, such as the
-  literal pools of compiled Java, is full of reserved encodings, and code is
-  entered at any word); `--words-only 1` runs the scan alone. The generated
-  library holds one such word of each class the rewriter copies field by
-  field, and a load of a vector pair into one register twice.
-  Admission and retry decisions are performance hints: rows warm them and
-  then change the text, restore it, and move the executor to another address
-  space, and the result must stay the engine's. Entering rewritten code must
-  not need more than a bounded part of the task stack the guest kernel's
-  threads run on (the size the kernel configuration gives, which the build
-  reads from it): a row runs the paths on a painted stack, holds the
-  high-water mark to a budget, and requires the runtime's own sampler to
-  agree with it. The guest runner requires the sample, rejects an unsampled
-  report and a size that is not the kernel's, and bounds how much deeper
-  than the start of its run the runtime went.
-  Every state rewritten code returns the engine at, every fault and the end
-  of a run lie, in order, on the path of the same run one instruction at a
-  time (registers, flags, FPCR and FPSR, thread pointer, vector registers
-  and memory; a comparison with one field changed in turn must fail). An
-  interrupt token flipped during a native loop through the engine adapter,
-  as the stop flag or the sequence word, ends the run on that path within
-  one block of the flip, and the run then goes on to the end the engine
-  alone reaches. A breakpoint written into the text and published through
-  the generation bridge keeps the page from being entered and stops at the
-  instruction in the engine's state, also when it is published while a vCPU
-  runs the loop, and rewritten code is entered again once the word is back.
-  Random cases start with cumulative FPSR flags set and, one in eight, with
-  the floating-point state not loaded yet; a change published in the dispatch
-  window comes from the vCPU's own thread and from a second one; and the
-  engine adapter's choice between the plain and the rewritten-code loop is
-  made once, when its executor is made.
-  `arm64-aot-tools` checks the generator's encoders, classifier, byte census
-  and fixture layout, including which forms are left to the engine.
-- `arm64-aot-runtime-product` checks that the product compilation of the AOT
-  runtime holds none of the diagnostics or test switches, and
-  `memory-product-carries-no-count-audit` that the product compilation of the
-  static MMU holds none of the count audit a diagnostics build links in a
-  second compilation. The unit tree builds that compilation as a probe nothing
-  links, so the gate also runs `memory-audit-compilation-fails-packaging` (the
-  packaging check refuses it, by its own message) and
-  `memory-audit-symbols-are-refused` (it refuses every memory-layer name `nm`
-  reports for the audited objects and not for the product's).
-- `arm64-aot-guest-runner` drives the guest runner of the next test against
-  scripted guests: a complete pair of arms passes, and every failed or
-  incomplete one (an exit status, a missing or empty workload row, a probe
-  that skipped scenarios or recorded no faults, a product arm without
-  residency evidence) fails. `arm64-aot-debug-rows` does the same for the
-  debug rows on scripted protobuf tombstones and records: a moved frame, a
-  register that changes only with the component, an incomplete mode and a
-  tombstone that was there before the run fail, and only a field that two runs
-  of one engine already differ in is masked.
-  `arm64-aot-tombstone-pb` holds the tombstone reader to the wire format
-  (a truncated file, a length past its parent, an unknown wire type, a
-  singular field twice, a field of the wrong wire type, trailing bytes: each
-  fails), pins the field numbers the model reads, and holds the model to the
-  crashing thread's registers, the mapping list (any order, no overlap, every
-  name by its exact bytes), the pointer into the faulting mapping and the
-  stacks of different threads.
-  `arm64-aot-share-rows` does the same for the share rows' records and
-  counter bounds. `arm64-aot-records` holds the records the guest debug
-  program prints to their one reader: it decodes hand-written lines exactly
-  (every malformed number, text, place and record is refused), builds on the
-  host the header the program prints with and requires the same line as the
-  Python encoder for the same value (names of any bytes, layouts of any number
-  of shapes), and runs the program's own maps reading through the runner for a
-  text that does not fit its buffer (the row fails).
-- `aot-guest-workloads` (integration, opt-in like the other Android guest
-  tests: it exists where `UML_AOT_IMAGE` and the Android launcher target do)
-  boots the release twice, without (`DARWIN_UML_AOT=0`) and with the
-  component, runs the
-  covered library families' workloads three times each (a Java command
-  among them, which runs the boot image's compiled code), the guest probe
-  (faults inside rewritten libz code, text patched at run time), the debug
-  rows and the share rows, and requires every command to succeed with
-  identical output; `run_aot_guest.py` lists what each part judges. With
-  `UML_AOT_DIAGNOSTICS` the AOT arm must also have entered the main boot
-  oats when the framework translates boot code.
-  The debug rows (`aot_guest_debug.cpp`, `debug_rows.py`) compare what a
-  debugger and the crash reporter see: tombstones of crashes in rewritten
-  libz and libc, and a tracer's registers, breakpoints and steps. The program
-  runs under the `ADDR_NO_RANDOMIZE` personality, and a register that points
-  into a mapping is compared by the file (its base name in the program's own
-  records, its whole path in a tombstone) or mapping and the offset in it (an
-  unnamed mapping by its size, its protection, its place among the unnamed
-  mappings of that shape, lowest address first, and how many there are),
-  because the image's userspace still places libraries and stacks at random.
-  What the program prints is records, one field per line (the kind, the
-  field, a type and the value, tab-separated; every byte of a text outside a
-  small safe set is written `%xx`, so a mapping name of any bytes is one
-  value); `records.py` is the one reader, and accepts a line only if encoding
-  what it read gives the line back and a record only if it has every field of
-  its kind once, in order. A tombstone is read from the protobuf file the crash
-  reporter writes beside the text one (`tombstone_NN.pb`, taken out of the
-  guest in base64 with its size and SHA-256 checked, and chosen by the process
-  id the program's shell says first among the files that are new since a
-  listing of the tombstone directory taken before the program ran): a
-  first-party strict reader of the wire
-  format (`protowire.py`) and a table of the field numbers the model reads
-  (`tombstone_pb.py`; the table follows the `tombstone.proto` of the source tree
-  the image is built from, and fields it does not list are skipped by wire type,
-  counted and reported on the row's line) build the same records, and a
-  register missing from the crashing thread, a mapping list that overlaps and a
-  file that ends before its last field fail. A pointer is located against the
-  file's own mapping list, put in address order, by the exact bytes of the
-  mapping's name; a thread's stack, whose name holds its thread id, is told
-  from the other stacks by its place among them (lowest address first) and
-  how many there are. Nothing in the comparison reads text. Records are compared
-  field by name, and the mask is a set of record kind and field pairs, never a
-  position in text. A pointer into an unnamed
-  mapping is proved over the whole record, field by name, or the row fails and
-  the field is never masked: every run compared must record it as a pointer
-  into mappings of one shape counted among the same number of them, and the
-  baselines must record it alike (equal counts are necessary, not sufficient,
-  for the same set of mappings); a pointer into one of several thread stacks
-  is held to the same rule. Mappings that share a name otherwise (a signal
-  stack, a heap region) are told apart by the offset in the mapping only. Only
-  a field that names nothing (a process id, a random value) may differ between
-  two runs of one engine, and few of them. A listed file is new if its name was
-  not listed or its size, modification time or SHA-256 differs from the listing
-  before the run; files are compared with their earlier selves and not with
-  the clock, so a step of the guest's clock moves none in or out, a name the
-  reporter reuses holds other bytes, and a tombstone of an earlier process of
-  the same number never stands for this run (the row fails when no new file
-  names the process); a file written again with the same bytes in the same
-  second is not told from the old one. That a file is whole rests on the
-  reporter having exited, the guest's own size and SHA-256 of the file, and
-  its last field (which the reporter writes last) being there; a file written
-  in another order is not proved whole by it.
-  Every error the program prints is a line of its own that begins with `FAIL`;
-  the runner rejects an output with `FAIL` anywhere and a line that is not a
-  whole record of the program's schema. The image is a user build, so
-  `debuggerd -b` and `kill -3` of a system process (which need root) are not
-  run.
-  The share rows (`aot_guest_share.cpp`, `share_rows.py`) run libz in many
-  processes: the read-only file system's library, a copy on the writable one,
-  a page copied by a write (in the children, or in their parent before they
-  are made), a protection that changed with and without a store, and memory
-  pressure. In a diagnostics build each mode states what the framework's
-  counts must show: verdicts reused for the file system's pages, a copied or
-  writable-file-system page refused and never shared, a page nothing wrote
-  never refused. The kernel's page cache does give up some of a covered
-  library's frames in an unrooted guest (under pressure, and to `fadvise` for
-  pages no process has mapped at that moment), but a read-only system file's
-  residency is observable only through the faults that reading it back takes:
-  for a file the caller neither owns, has a capability over, nor could open
-  for writing, `mincore` reports every page as resident and `cachestat`
-  refuses with `EPERM` (the guest's shell owns neither the system image's
-  files nor `libz.so`, and the owner and capability exceptions do not apply
-  to it). The `pressure` and `evict` rows print that count and
-  require the pages that stayed to share their verdicts, and `evict` also
-  requires that a file nothing maps loses its pages. The faults that read a
-  page of `libz.so` back across the two rows are printed as informational,
-  since whether the guest let a page go there is chance; the frame's last
-  departure and reuse are the reclaim row's and the memory layer's unit rows.
-  `--study-eviction` adds the `reclaim` row, for a guest kernel that treats
-  every caller as the owner of every file for the page cache (a study-only
-  change to `madvise(MADV_PAGEOUT)` and `mincore`; no artifact of it is
-  accepted or published). It evicts the library's pages from every address
-  space that maps them, three rounds over (a frame freed in one round can
-  come back to the page it held before), each round in an invocation of its
-  own so that the framework's counts can be read around it, asserts from
-  `mincore` that most of the pages left in each round and that reading them
-  back took faults, and requires the children which run the library
-  afterwards to have at least half as many pages verified by hash again, and
-  then to share those verdicts. The page cache's choice of frames is not
-  assumed: the framework counts the pages it hashed because the epoch of
-  their frame had moved (the table held that frame's verdict for the same
-  page under an older epoch), and every round after the first must have at
-  least one. The option needs `--share-program`, `--diagnostics` and
-  `--manifest` (the runner refuses it before a guest starts without them),
-  and the records of both arms must show the eviction whether or not
-  anything was counted, so on a stock kernel the row fails however the
-  runner was invoked.
-  Execution evidence exists only in a diagnostics build, where the libraries
-  the run names must have been entered, and where the memory layer recounts
-  the executable mappings of every physical-page record against the
-  executable words of every address space (every two seconds, holding them
-  all at once): a mismatch or an accounting anomaly fails the
-  run, and so does a run that never audited, a report without every result
-  of the audit, and one in which no exact audit finished after the guest's
-  work was done (every report carries the instant its counters were read and
-  the last exact audit it finished by sequence number; the runner takes the
-  number to exceed from a report read after the work ended, and waits for an
-  audit numbered above it). A product build has residency
-  evidence: the framework's text became resident in the emulator process
-  (`vmmap`, macOS) and was not with the component off. Reading the text
-  raises residency too, so that proves the framework was touched and not that
-  rewritten instructions ran. Speed is printed, not judged.
 - `arm64-instruction-corpus` runs the generated A64 corpus through both
   engines; the special records (native SME, absent features, the SM = 0 family,
   top-byte ignore, indirect-branch targets, compare-retry exclusives, native
@@ -1125,12 +825,6 @@ storage layout (`android17-launcher-arguments`,
 where the Android CLI is built, runs the executable's own argument checks)
 ([storage](../android/lineage-24/README.md#static-disk-and-boot-contract),
 [block device](../darwin/device/block/README.md)).
-The target-files verifier also reads the compiled policy for the text message
-service ([README](../android/lineage-24/README.md#text-messages)): which types may
-create, bind or listen on vsock, who may reach the service's sockets and data, the
-services it finds, who may set adbd's listen address, and which seapp line selects
-its domain; the fixtures of `lineage24-target-files-fixtures` and
-`lineage24-builder-lane` each hold a policy that one of those checks must refuse.
 `lineage24-camera-app-contract` checks that the camera application's overlay,
 its patch series and the target-files verifier's constants name the same
 settings and values; what the application then does is the image's to show.
@@ -1175,7 +869,7 @@ anywhere is a blocker. The candidate must show:
   `userdata`, a newer release keeps an older instance's apps and data and an
   older release on a newer instance is refused.
 - **Hardware video** (a guest started with `--video`). `MediaCodecList` lists
-  the five `c2.v4l2.*` codecs with no SELinux or seccomp denial; the encoder
+  the four `c2.v4l2.*` codecs with no SELinux or seccomp denial; the encoder
   and decoder classes of the media CTS modules pass on both ABIs through the
   hardware codecs, which the host's video activity log confirms, and the
   software `c2.android.*` results do not regress. Run the decoder performance
@@ -1288,73 +982,6 @@ packages, install times and processes, and `android17-oldapp-switch-command`
 (tooling; skipped without a JDK) runs the command's rule, listing, cleanup,
 lock file (on real files), writes and exit statuses on a plain JVM; the Android
 calls need a built image.
-`android-app-shortcuts` (integration) registers when
-`UML_ANDROID_APP_SHORTCUTS_RELEASE` names a release built with the launcher-application
-command ([README](../android/lineage-24/README.md#launcher-applications)): as the adb shell
-user, `kernarium_apps` is in the image and its `digest` and `list` carry one header block (the foreground
-user, the system's first locale, a count that matches), with rows in order, names in the grammar and
-labels that are safe and within the bounds; Settings is listed as built in under its own label, and the probe
-application (`appsprobe_apk.py`: two launcher activities, one with a hostile label and one with a
-label over the bound, a launcher activity that is not exported, an exported one with no launcher
-filter and a launcher alias that the manifest disables; a second package whose label is a string
-resource and whose icon is an adaptive icon of a colour and a bitmap layer, and a third that is the
-second with a foreground that is no picture; all three are test-only and
-installed with `-t`, as the shell may change a component's state of a test-only package alone) with the escaped and the
-cut labels and none of the others; `icons` answers records whose length and SHA-256 check out,
-decoded (8-bit RGB or RGBA, every chunk's checksum checked) to pictures that are not blank and whose alpha flag is true, the second
-package's with its colour in the corners and its disc in the middle, `noicon` for the first,
-`missing` for what is not an entry, in the order asked, no built-in application's icon is `error`, and nine
-components are status 64; the drawing is
-not in the shell (while `icons` runs over eight components the tool's process, sampled through
-`/proc`, maps and holds no package, overlay or resource-cache file and nothing of a target's own
-directory, and the renderer runs in two processes of its own, an ordinary application's and an isolated one's, as
-`untrusted_app` and `isolated_app`), an application's own call of the renderer's provider is refused for
-the shell-only permission, and the bad icon is `error` among seven good ones that are all `ok`; the alias
-is not listed until `pm enable` enables it for the user, and then listed, drawn and started; the
-digest is recomputed from the rows; `launch` makes the probe's activity the resumed one (and again when
-it is open) and refuses with status 2 and no output the not exported and no-filter activities, a
-built-in application's other activity, a package that is not installed, a disabled application and
-every hostile argument, none of which runs (a marker file stays absent); usage errors are status
-64; the shell user's data directory is unchanged and no denial of the shell domain is logged
-from a time on the device's clock taken before the first call (only that window is read, so a line
-the log buffer has dropped cannot hide a new one), and the isolated renderer's audit lines in that window
-are printed with the result without being judged; and the digest changes with an install, an update in place (whose icon keys alone
-change) and a disabled application, and returns to its earlier value when the application is
-removed. `android17-app-shortcuts-command` (tooling; skipped without a JDK) runs the command's
-grammar, the labels' escaping and bounds, the listing, digest and icon keys, every answer's
-framing read back by a parser of its own, the icon records, the launch's refusals and argument
-vector, how a start's output is read, the child process (real processes: output drained,
-deadline, termination and reaping), the renderer's hold (whose provider it takes, the one user for
-every acquisition, a provider that died, a hold that stays closed, a call that is never answered),
-the icon source's bound, the resource files' order and the statuses on a plain JVM, then again with one rule removed at a time (the escaping, a bound, the
-launch refusal, the grammar, the digest's inputs, the PNG checks, the deadlines, the reaping),
-where the rows it names must fail; it also checks the image's wiring, that the sources write
-and open nothing, and, as text with a mutant for each, what the Android glue must not do (a
-substitute for a failed lookup, the manifest's enabled flag, the wall clock, the device's own
-configuration for an icon or a label, a built-in application's icon key without the image's build time, a
-file measured by its extension, a kill that is not a SIGKILL by pid).
-`android17-icon-renderer` (tooling; skipped without a JDK) runs what the icon renderer
-(`KernariumIcons`) shares with the command (the shell user's uid, the shape of a request, a path's
-rules, the sizes and bounds) and the provider's worker (one deadline over a request's queue, bind and
-drawing; an idle cleanup that never blocks a bind; a worker that failed is never reused) over stand-ins for the platform, on a plain JVM, then again with one rule removed at a time, and checks as text,
-with a mutant for each rule, what its provider, worker, drawing and service must do and must not touch,
-and its manifest and build file (an unprivileged, direct-boot-aware application with a guarded
-provider and an isolated service, and nothing else).
-`android17-app-shortcuts-runner` (tooling; skipped without keytool and
-jarsigner) runs the probe packages (the bad icon and the caller that is an ordinary application), the strict
-parsers (the sampler's answer too), what the tool's process may hold and the domains the renderer's processes may run in,
-and every step against a scripted guest that differs one way at a time; the Android calls need a built image.
-`android17-sms-service` (tooling; skipped without a JDK) runs the text message
-service on a plain JVM: the PDUs it builds, read back with a parser of its own
-and the JDK's `UTF-16` decoder, the one Android applies to a UCS-2 message, which
-drops a leading byte order mark; the request's parser and the answers against the
-golden file the host's tests read too; the delivery record at each point where a
-request can end (a forced end, a failing file operation, a second process on its
-lock); and the host channel's server, frame and admission over stand-ins for the
-platform's socket classes. The stand-ins make public only what the platform's
-public API has, and a row lists it, so that a call of a hidden member fails there
-as it does in the image build. `Delivery` and `HostChannel` (the broadcasts, the
-inbox and the socket calls) need a built image.
 `android-vulkan-smoke` (integration) registers when `UML_ANDROID_VULKAN_SMOKE_RELEASE`
 names a release and runs the image's `kernarium_vk_ahb_import` in a guest: hardware
 buffers imported and read back, and the guest memory file descriptors
@@ -1408,12 +1035,7 @@ confirmed carrying before a restart or suspend; crashes and ANRs of
 NetworkStack, SystemUI and Settings, and illegal instructions, are read from
 the whole stream and fail the run, in the section whose window holds them or in
 none.
-A suspend keeps the station: the network after the wake is the one before it,
-the guest's log shows no disconnect, a request a second after the wake succeeds
-and the connections the host holds into the guest carry data, also after Wi-Fi
-was turned off and on and through a stay with the emulator stopped; a suspend
-that lands inside the station's connect delay ends with a working network and a
-quiet guest console. The network joins again after a restart, and the boot script
+The network joins again after a suspend and after a restart, and the boot script
 runs without SELinux denials; a joined network keeps its metered and
 Auto-connect settings, a forgotten one stays forgotten and Wi-Fi that is off
 stays off. A guest stopped when the Wi-Fi service lists the network, or when
@@ -1485,30 +1107,6 @@ Android sees (devices, keys, axes), what comes back (rumble, lights, the
 drivers' feature requests), hot plug, the relay's recovery, and reports the
 guest's cost per report and the relay's memory. `android17-gamepad-runner`
 (tooling) runs its wire, controllers and parsers without a guest.
-`android-sms-channel` and `android-sms-record` (integration) register when
-`UML_ANDROID_SMS_RELEASE` names the release and `UML_ANDROID_SMS_PROBE_APK` and
-`UML_ANDROID_SMS_VSOCKPROBE_DEX` the output of
-[`sms/build-apk.sh`](../tests/integration/android/sms/README.md): the runner plays
-the host application over a launcher forward to the service's port and sends the
-contract's frames. It checks that a request from the host is handed over and
-answered, that a delivery asked from adb (a forward to the port) is refused, that
-adbd refuses an `adb reverse` onto a vsock port, the service's domain and denials, every vsock listener
-of the guest, and that neither the shell nor an application can create a vsock
-socket; the record mode checks that no message is handed over twice across a
-crash, a reboot and fifty kills. `--mode proof` (a userdebug build) writes a
-pending record and traces the order of the record's writes; the variants without
-Messaging or without an SMS provider, the adbd topic and the kernel configuration
-are options of the runner (`--list-rows` names each row and what it needs).
-`--mode delivery` is the smallest check of a built image and needs no probe, root
-or registration, but the SMS provider (it refuses `--variant no-provider`): D1 and
-then D2 send a plain message and messages with a one-time code, each handed over,
-answered and stored as exactly one new inbox row, and `com.android.phone`, waited
-for, keeps its pid; D3 reads the service's log: it listens, nothing was refused,
-and the platform warned of no hidden-API access and denied no vsock socket.
-With `--proof-image` it boots an unsigned proof image
-(manifest schema 0), which no installed-release reader takes, on a fresh instance.
-`android17-sms-runner` (tooling) runs its wire, record file, parsers and
-judgements without a guest.
 `android-oldapp` (integration) registers when `UML_ANDROID_OLDAPP_RELEASE`
 names a release built with the old-application layer
 ([README](../android/lineage-24/README.md#old-applications)): a probe application

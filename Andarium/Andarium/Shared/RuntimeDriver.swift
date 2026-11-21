@@ -116,7 +116,7 @@ enum PermissionPrompt: Identifiable, Equatable {
 /// its run. The Simulator preview has no driver, and the model then plays the
 /// same steps against mock data.
 @MainActor
-protocol RuntimeDriver: AnyObject, OldAppsSource, AndroidAppsSource {
+protocol RuntimeDriver: AnyObject, OldAppsSource {
     func create(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest
     /// Deletes the guest and everything it stored, its choices included.
     func erase(progress: @escaping @Sendable (Double) -> Void) async throws
@@ -171,9 +171,6 @@ protocol RuntimeDriver: AnyObject, OldAppsSource, AndroidAppsSource {
     /// Lets the guest play its haptics on the device, or not: the Haptics
     /// switch, which applies at once.
     func setHaptics(_ on: Bool)
-    /// Settings' "When hot" changed (`AppModel.heatLimitOn`): Android is told
-    /// how hot the device is, or nothing, at once.
-    func setHeatLimit(_ on: Bool)
     /// Settings' "Use the pointer as touch" changed: the guest has no mouse
     /// while it is on.
     func setPointerAsTouch(_ on: Bool)
@@ -206,25 +203,6 @@ protocol RuntimeDriver: AnyObject, OldAppsSource, AndroidAppsSource {
     /// Whether Android has mounted its internal storage (`InternalStorage`);
     /// nil when it cannot be read now. Android's boot ends before it does.
     func storageReady() async -> Bool?
-    /// Delivers a text message to the guest as if from the network, over the
-    /// service's own channel (`GuestSmsChannel`), and returns what is known of
-    /// the request. The request's identifier and attempt are the message's
-    /// (`GuestSms.Retries`); `GuestSms.result` says what the outcome means.
-    /// Cancelling the task ends the exchange at once.
-    func sendSms(_ request: GuestSmsRequest) async -> GuestSmsChannel.Outcome
-    /// What the bar owes the person about a message whose result was not yet
-    /// shown (`TextMessageNotice`), in this instance's directory.
-    var textMessageNotice: TextMessageNotice { get }
-    /// Android's screen reader in the guest; nil when the guest did not
-    /// answer (a read that fails is not a state).
-    func readScreenReader() async -> ScreenReaderState?
-    /// Turns the screen reader on or off, keeping every other accessibility
-    /// service the guest has on, and returns the state Android reports after
-    /// the same command. `service` is the one to add when turning on. Throws
-    /// when the command or its answer failed.
-    func changeScreenReader(_ on: Bool, service: String) async throws -> ScreenReaderState
-    /// Opens Android's Accessibility page on the guest's screen.
-    func openAccessibilitySettings() async throws
     /// Opens the listener of ADB over the network on the device's network
     /// addresses. Throws when it cannot (`AdbError.io(EADDRINUSE)` for a
     /// port in use).
@@ -283,15 +261,10 @@ extension RuntimeDriver {
     func listOldApps(limit: Duration?) async -> OldAppListing { .unavailable }
     func setOldApp(_ package: String, on: Bool) async -> OldAppWrite { .failed }
     func isOldAppOpen(_ package: String) async -> Bool? { nil }
-    /// A driver with no image to ask has no apps to offer and cannot open one.
-    var androidAppsTool: (any AndroidAppsTool)? { nil }
-    func awaitAndroidReady(homeReached: Bool) async -> AndroidAppReadiness.Outcome { .timedOut }
     /// A driver with no guest to read adds nothing.
     func guestStallFiles() async -> [BugReportArchive.Entry] { [] }
     /// A driver with no session record has nothing to tell.
     func setNetworkNotice(_ denial: NetworkDenial?) {}
-    /// A driver with no thermal session tells Android nothing either way.
-    func setHeatLimit(_ on: Bool) {}
     /// A driver with no guest has no values that tell an installation apart.
     func guestIdentifiers() -> GuestIdentifiers { .none }
     #if FEEDBACK_MAIL

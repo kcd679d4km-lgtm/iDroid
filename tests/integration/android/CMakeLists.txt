@@ -77,26 +77,6 @@ if(UML_ANDROID_OLDAPP_SWITCH_RELEASE AND TARGET uml-darwin-android17)
         RESOURCE_GROUPS cpus:4)
 endif()
 
-# The launcher-application shell command of Add to Home Screen
-# (android/lineage-24/overlay/app_shortcuts), as the adb shell user: the runner installs probe
-# applications (appsprobe_apk.py), checks the digest, the list, the icons and the launch with its
-# refusals, and that the digest follows the set of applications. It boots Android with the macOS
-# launcher, so it is opt-in: name a release built with the command.
-set(UML_ANDROID_APP_SHORTCUTS_RELEASE "" CACHE PATH
-    "Installed Android release directory, built with kernarium_apps, that the android-app-shortcuts test boots")
-if(UML_ANDROID_APP_SHORTCUTS_RELEASE AND TARGET uml-darwin-android17)
-    uml_add_integration_test(
-        NAME android-app-shortcuts
-        COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/run_android_app_shortcuts.py
-            --release ${UML_ANDROID_APP_SHORTCUTS_RELEASE}
-            --emulator $<TARGET_FILE:uml-darwin-android17>
-        LABELS guest;boot;android
-        TIMEOUT 1800
-        PROCESSORS 4
-        RESOURCE_GROUPS cpus:4)
-endif()
-
 # The same runner with --image-inputs, for a release built from this
 # repository's overlay: wlan0's address derived from eth0's, the Wi-Fi joined,
 # no IPv6 link-local address on eth0 and the macvlan, and the adb key that no
@@ -254,7 +234,7 @@ endif()
 # of android/lineage-24, and the validation of routes p0029 and p0033): with the
 # internet checks failing, the network stays enabled and joined, validated, and
 # shows only Android's Wi-Fi mark, also when a sign-in or block page answers the
-# probe; a suspend keeps the station and a restart joins it again; a joined network
+# probe; it joins again after a suspend and after a restart; a joined network
 # keeps its settings, a forgotten one stays forgotten and Wi-Fi that is off
 # stays off. With previous releases named, the data disk of each is booted by the
 # release under test: one that a release left with the network disabled is
@@ -466,41 +446,6 @@ if(UML_ANDROID_GAMEPAD_RELEASE AND UML_ANDROID_GAMEPAD_PROBE_APK AND TARGET uml-
         TIMEOUT 3600
         PROCESSORS 4
         RESOURCE_GROUPS cpus:4)
-endif()
-
-# The text-message service (android/lineage-24/overlay/sms): the runner plays the
-# host application over a vsock forward to the service's port and sends the
-# contract's frames. Its channel mode checks the channel (what the host may and
-# what adb and the guest may not do, the service's domain, life and denials,
-# every vsock listener of the guest); its record mode checks the delivery record
-# across a crash, a reboot and fifty kills. Both boot Android with the macOS
-# launcher, so they are opt-in: name the release under test and the probe's APK
-# and DEX (tests/integration/android/sms/build-apk.sh). The runner's other modes
-# and options (a proof build's rows, the variants with no Messaging or no SMS
-# provider, the adbd topic, the kernel configuration) are run by hand.
-set(UML_ANDROID_SMS_RELEASE "" CACHE PATH
-    "Installed Android release directory that the android-sms tests boot")
-set(UML_ANDROID_SMS_PROBE_APK "" CACHE FILEPATH
-    "AndariumSmsProbe.apk that the android-sms channel test installs")
-set(UML_ANDROID_SMS_VSOCKPROBE_DEX "" CACHE FILEPATH
-    "vsockprobe.dex that the android-sms channel test runs as the shell")
-if(UML_ANDROID_SMS_RELEASE AND UML_ANDROID_SMS_PROBE_APK AND UML_ANDROID_SMS_VSOCKPROBE_DEX
-        AND TARGET uml-darwin-android17)
-    foreach(mode channel record)
-        uml_add_integration_test(
-            NAME android-sms-${mode}
-            COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/run_android_sms.py
-                --release ${UML_ANDROID_SMS_RELEASE}
-                --emulator $<TARGET_FILE:uml-darwin-android17>
-                --probe-apk ${UML_ANDROID_SMS_PROBE_APK}
-                --vsockprobe-dex ${UML_ANDROID_SMS_VSOCKPROBE_DEX}
-                --mode ${mode}
-            LABELS guest;boot;android
-            TIMEOUT 3600
-            PROCESSORS 4
-            RESOURCE_GROUPS cpus:4)
-    endforeach()
 endif()
 
 # The management console's sync on an Android guest, whose init leaves SysRq

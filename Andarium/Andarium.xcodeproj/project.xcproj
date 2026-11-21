@@ -31,7 +31,6 @@
     { "kind": "folder", "path": "../GuestHost/Sources", "target-membership": [ "Andarium" ] },
     { "kind": "folder", "path": "AndariumTests", "target-membership": [ "AndariumTests" ] },
     { "kind": "folder", "path": "AndariumUITests", "target-membership": [ "AndariumUITests" ] },
-    { "kind": "folder", "path": "AndariumPreviewUITests", "target-membership": [ "AndariumPreviewUITests" ] },
     {
       "kind": "group",
       "path": "Config",
@@ -93,19 +92,7 @@
             "AndariumPreview/resources",
           ],
         }, {
-          "path": "StoreLink.xcstrings",
-          "target-membership": [
-            "Andarium/resources",
-            "AndariumPreview/resources",
-          ],
-        }, {
           "path": "FollowX.xcstrings",
-          "target-membership": [
-            "Andarium/resources",
-            "AndariumPreview/resources",
-          ],
-        }, {
-          "path": "AppShortcuts.xcstrings",
           "target-membership": [
             "Andarium/resources",
             "AndariumPreview/resources",
@@ -134,7 +121,6 @@
         { "path": "<PRODUCTS>/AndariumPreview.app", "id": "F7B7BE3141FE6623A0E4497E", "type": "wrapper.application", "index": false },
         { "path": "<PRODUCTS>/AndariumTests.xctest", "id": "AE75CA0B879FBA6ECC773C6A", "type": "wrapper.cfbundle", "index": false },
         { "path": "<PRODUCTS>/AndariumUITests.xctest", "id": "4D6B3E8A1C5F7092A3B4C5D6", "type": "wrapper.cfbundle", "index": false },
-        { "path": "<PRODUCTS>/AndariumPreviewUITests.xctest", "id": "C4E1A7D20B9F38E65A1D7C40", "type": "wrapper.cfbundle", "index": false },
       ],
     },
   ],
@@ -188,19 +174,12 @@
           "script": "\"$SRCROOT/../Kernarium/scripts/embed-device-framework.sh\" \"$SRCROOT/../.build/kernarium-xcframeworks/KosmicKrisp.xcframework\"\n",
         }, {
           "kind": "script",
-          "name": "Embed UmlArm64Aot (when packaged)",
-          "run-on-every-build": true,
-          "shell": "/bin/sh",
-          "script": "\"$SRCROOT/../Kernarium/scripts/embed-device-framework.sh\" --optional \"$SRCROOT/../.build/kernarium-xcframeworks/UmlArm64Aot.xcframework\"\n",
-        }, {
-          "kind": "script",
           "name": "Check embedded artifacts",
           "run-on-every-build": true,
           "shell": "/bin/sh",
           "script": [
             "case \"$CONFIGURATION\" in AppStore|TestFlight) ;; *) exit 0 ;; esac",
-            "/usr/bin/env python3 -B \"$SRCROOT/../scripts/check-embedded-artifacts.py\" --app \"$TARGET_BUILD_DIR/$WRAPPER_NAME\" --android-release --kernel android --aot &&",
-            "/usr/bin/env python3 -B \"$SRCROOT/../scripts/check-no-aot-diagnostics.py\" \"$TARGET_BUILD_DIR/$WRAPPER_NAME\"",
+            "/usr/bin/env python3 -B \"$SRCROOT/../scripts/check-embedded-artifacts.py\" --app \"$TARGET_BUILD_DIR/$WRAPPER_NAME\" --android-release --kernel android",
             "",
           ],
         }, {
@@ -214,7 +193,7 @@
           "shell": "/bin/sh",
           "script": [
             "case \"$CONFIGURATION\" in AppStore|TestFlight) ;; *) exit 0 ;; esac",
-            "/usr/bin/env python3 -B \"$SRCROOT/scripts/check-app-store-bundle.py\" --configuration \"$CONFIGURATION\" --feedback-address \"$FEEDBACK_ADDRESS\" --feedback-receiver \"$FEEDBACK_RECEIVER\" --tip-products \"$TIP_LITE,$TIP_PRO,$TIP_MAX,$TIP_ULTRA\" --tip-local-products \"$TIP_PRODUCT_LITE,$TIP_PRODUCT_PRO,$TIP_PRODUCT_MAX,$TIP_PRODUCT_ULTRA\" --review-id \"$REVIEW_ID\" --review-local-id \"$REVIEW_APP_ID\" --store-link-id \"$STORE_LINK_ID\" --follow-x-handle \"$FOLLOW_X_HANDLE\" --developer-x-handle \"$DEVELOPER_X_HANDLE\" --developer-name \"$SHEET_DEVELOPER_NAME\" --developer-github \"$SHEET_DEVELOPER_GITHUB\" --developer-x \"$SHEET_DEVELOPER_X\" --developer-local-github \"$DEVELOPER_GITHUB_HANDLE\" --icp-number \"$ICP_NUMBER\" --icp-local-number \"$DEVELOPER_ICP_NUMBER\" --info-source \"$SRCROOT/Config/Info.plist\" --beta-notes \"$SRCROOT/Andarium/Shared/WhatsNew.json\" \"$TARGET_BUILD_DIR/$WRAPPER_NAME\"",
+            "/usr/bin/env python3 -B \"$SRCROOT/scripts/check-app-store-bundle.py\" --configuration \"$CONFIGURATION\" --feedback-address \"$FEEDBACK_ADDRESS\" --feedback-receiver \"$FEEDBACK_RECEIVER\" --tip-products \"$TIP_LITE,$TIP_PRO,$TIP_MAX,$TIP_ULTRA\" --tip-local-products \"$TIP_PRODUCT_LITE,$TIP_PRODUCT_PRO,$TIP_PRODUCT_MAX,$TIP_PRODUCT_ULTRA\" --review-id \"$REVIEW_ID\" --review-local-id \"$REVIEW_APP_ID\" --follow-x-handle \"$FOLLOW_X_HANDLE\" --developer-x-handle \"$DEVELOPER_X_HANDLE\" --developer-name \"$SHEET_DEVELOPER_NAME\" --developer-github \"$SHEET_DEVELOPER_GITHUB\" --developer-x \"$SHEET_DEVELOPER_X\" --developer-local-github \"$DEVELOPER_GITHUB_HANDLE\" --icp-number \"$ICP_NUMBER\" --icp-local-number \"$DEVELOPER_ICP_NUMBER\" --info-source \"$SRCROOT/Config/Info.plist\" --beta-notes \"$SRCROOT/Andarium/Shared/WhatsNew.json\" \"$TARGET_BUILD_DIR/$WRAPPER_NAME\"",
             "",
           ],
         }, {
@@ -258,20 +237,6 @@
           "script": [
             "case \"$CONFIGURATION\" in AppStore|TestFlight) exit 0 ;; esac",
             "/usr/bin/env python3 -B \"$SRCROOT/scripts/check-app-store-bundle.py\" --review --configuration \"$CONFIGURATION\" --review-id \"$REVIEW_ID\" --review-local-id \"$REVIEW_APP_ID\" \"$TARGET_BUILD_DIR/$WRAPPER_NAME\"",
-            "",
-          ],
-        }, {
-          "kind": "script",
-          "name": "Check App Store notice",
-          "input-paths": [
-            "$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
-            "$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
-          ],
-          "run-on-every-build": true,
-          "shell": "/bin/sh",
-          "script": [
-            "case \"$CONFIGURATION\" in AppStore|TestFlight) exit 0 ;; esac",
-            "/usr/bin/env python3 -B \"$SRCROOT/scripts/check-app-store-bundle.py\" --store-link --configuration \"$CONFIGURATION\" --store-link-id \"$STORE_LINK_ID\" \"$TARGET_BUILD_DIR/$WRAPPER_NAME\"",
             "",
           ],
         }, {
@@ -353,7 +318,7 @@
         "INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone": "UIInterfaceOrientationPortrait",
         "INFOPLIST_OTHER_PREPROCESSOR_FLAGS": "-traditional -undef",
         "INFOPLIST_PREPROCESS": "YES",
-        "INFOPLIST_PREPROCESSOR_DEFINITIONS": "$(FEEDBACK_PLIST_DEFINITION) $(TIP_JAR_PLIST_DEFINITION) $(REVIEW_PLIST_DEFINITION) $(STORE_LINK_PLIST_DEFINITION) $(DEVELOPER_PLIST_DEFINITIONS) $(FOLLOW_X_PLIST_DEFINITION) $(ICP_PLIST_DEFINITION)",
+        "INFOPLIST_PREPROCESSOR_DEFINITIONS": "$(FEEDBACK_PLIST_DEFINITION) $(TIP_JAR_PLIST_DEFINITION) $(REVIEW_PLIST_DEFINITION) $(DEVELOPER_PLIST_DEFINITIONS) $(FOLLOW_X_PLIST_DEFINITION) $(ICP_PLIST_DEFINITION)",
         "LD_RUNPATH_SEARCH_PATHS": [
           "$(inherited)",
           "@executable_path/Frameworks",
@@ -501,7 +466,7 @@
         "INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone": "UIInterfaceOrientationPortrait",
         "INFOPLIST_OTHER_PREPROCESSOR_FLAGS": "-traditional -undef",
         "INFOPLIST_PREPROCESS": "YES",
-        "INFOPLIST_PREPROCESSOR_DEFINITIONS": "$(FEEDBACK_PLIST_DEFINITION) $(TIP_JAR_PLIST_DEFINITION) $(REVIEW_PLIST_DEFINITION) $(STORE_LINK_PLIST_DEFINITION) $(DEVELOPER_PLIST_DEFINITIONS) $(FOLLOW_X_PLIST_DEFINITION) $(ICP_PLIST_DEFINITION)",
+        "INFOPLIST_PREPROCESSOR_DEFINITIONS": "$(FEEDBACK_PLIST_DEFINITION) $(TIP_JAR_PLIST_DEFINITION) $(REVIEW_PLIST_DEFINITION) $(DEVELOPER_PLIST_DEFINITIONS) $(FOLLOW_X_PLIST_DEFINITION) $(ICP_PLIST_DEFINITION)",
         "LD_RUNPATH_SEARCH_PATHS": [
           "$(inherited)",
           "@executable_path/Frameworks",
@@ -513,7 +478,6 @@
         "SHEET_DEVELOPER_GITHUB": "",
         "SHEET_DEVELOPER_NAME": "",
         "SHEET_DEVELOPER_X": "",
-        "STORE_LINK_ID": "",
         "SUPPORTED_PLATFORMS": "iphonesimulator",
         "SUPPORTS_MACCATALYST": "NO",
         "SWIFT_APPROACHABLE_CONCURRENCY": "YES",
@@ -526,34 +490,6 @@
         "TIP_PRO": "",
         "TIP_ULTRA": "",
         "WHATS_NEW_TRACK": "BETA",
-      },
-    }, {
-      "name": "AndariumPreviewUITests",
-      "id": "A10000000000000000000010",
-      "product": "Products/AndariumPreviewUITests.xctest",
-      "product-type": "bundle.ui-testing",
-      "test-host-target": "AndariumPreview",
-      "dependencies": [
-        "AndariumPreview",
-      ],
-      "build-phases": [
-        "compile-sources",
-        "frameworks",
-        "resources",
-      ],
-      "build-settings": {
-        "CODE_SIGN_STYLE": "Automatic",
-        "CURRENT_PROJECT_VERSION": "1",
-        "GENERATE_INFOPLIST_FILE": "YES",
-        "MARKETING_VERSION": "1.0",
-        "PRODUCT_BUNDLE_IDENTIFIER": "com.imxieyi.AndariumPreviewUITests",
-        "PRODUCT_NAME": "$(TARGET_NAME)",
-        "SUPPORTED_PLATFORMS": "iphonesimulator",
-        "SWIFT_APPROACHABLE_CONCURRENCY": "YES",
-        "SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY": "YES",
-        "SWIFT_VERSION": "5.0",
-        "TARGETED_DEVICE_FAMILY": "1,2",
-        "TEST_TARGET_NAME": "AndariumPreview",
       },
     },
   ],

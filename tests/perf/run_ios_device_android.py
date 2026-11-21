@@ -108,12 +108,6 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--disk-size-gib", type=int,
                         help="the guest storage capacity")
     parser.add_argument(
-        "--haptics", action="store_true",
-        help="this run tests haptics: the launch states no haptics setting, "
-        "so the application's own Haptics switch decides. Without it the "
-        "launch states ANDARIUM_HAPTICS=0 and the phone stays silent",
-    )
-    parser.add_argument(
         "--setting", action="append", default=[], metavar="NAME=VALUE",
         help="another KERNARIUM_* or ANDARIUM_* launch setting",
     )
@@ -778,8 +772,6 @@ def main(argv: list[str] | None = None) -> int:
             "engine": options.engine,
             "page_size": 4096,
         },
-        # Whether the phone's own haptics were left on for the run.
-        "haptics": options.haptics,
         "runtime_result": None,
         "workload": None,
     }
@@ -802,7 +794,6 @@ def main(argv: list[str] | None = None) -> int:
             engine=options.engine,
             host_port=host_port,
             disk_size_gib=options.disk_size_gib,
-            haptics=options.haptics,
             extra=parse_settings(options.setting),
         )
         artifact.mkdir(parents=True, exist_ok=False)

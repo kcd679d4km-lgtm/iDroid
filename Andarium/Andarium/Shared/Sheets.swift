@@ -159,7 +159,6 @@ struct InfoSheet: View {
                         }
                     }
                     .padding(.vertical, 6)
-                    .accessibilityElement(children: .combine)
                     if !model.whatsNew.releases.isEmpty {
                         NavigationLink(value: InfoPage.whatsNew) {
                             HStack(spacing: 12) {
@@ -171,9 +170,6 @@ struct InfoSheet: View {
                         .accessibilityIdentifier("info-whats-new")
                     }
                 }
-                #if TESTFLIGHT_STORE_LINK
-                StoreLinkSection()
-                #endif
                 Section("System info") {
                     LabeledContent("Build", value: model.system.buildLabel)
                     LabeledContent("Android version", value: model.system.version)

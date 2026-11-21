@@ -2,12 +2,10 @@
 #pragma once
 
 #include "uml_darwin_network.h"
-#include "address_reset.hpp"
 #include "dns_resolver.hpp"
 #include "host_addresses.hpp"
 #include "network_counters.hpp"
 #include "platform/descriptor.hpp"
-#include "platform/host_network_path.hpp"
 
 #include <libslirp.h>
 #include <poll.h>
@@ -264,83 +262,6 @@ public:
 	{
 		dns_streams_unavailable_for_testing_ = unavailable;
 	}
-	void set_dns_before_answer_for_testing(void (*hook)(void *),
-					       void *context) noexcept
-	{
-		resolver_.set_before_answer_for_testing(hook, context);
-	}
-	/* The host's network path, which the resolver reads when it answers.
-	 * The product starts the system's monitor at open(); the test build does
-	 * not unless asked, so a machine with no network behaves as one with
-	 * (the probes need none), and a test sets the state itself. Applies to
-	 * the next open(), which drops a monitor that is no longer asked for. */
-	void set_path_monitor_for_testing(bool enabled) noexcept
-	{
-		path_monitor_for_testing_ = enabled;
-	}
-	[[nodiscard]] uml::platform::HostNetworkPathState &
-	path_state_for_testing() noexcept
-	{
-		return path_state_;
-	}
-	/* The local address of a guest flow's host socket is `reader(descriptor)`
-	 * instead of the socket's own, so that flows through Unix-domain guest
-	 * forwards, which have no address, stand for flows bound to different
-	 * addresses. */
-	void set_flow_local_address_for_testing(
-		std::function<std::optional<HostIpv4>(slirp_os_socket)> reader)
-	{
-		flow_local_address_for_testing_ = std::move(reader);
-	}
-	/* Runs one pass of the event loop now, as a report or a packet does. */
-	void wake_for_testing() noexcept
-	{
-		wake();
-	}
-	/* Path reports the event loop has read into the hold, and the times it
-	 * has looked at the hold: a test waits on them for the loop to have seen
-	 * what it did. */
-	[[nodiscard]] std::uint64_t path_reports_handled_for_testing() const noexcept
-	{
-		return path_reports_handled_for_testing_.load(
-			std::memory_order_acquire);
-	}
-	[[nodiscard]] std::uint64_t address_reset_checks_for_testing() const noexcept
-	{
-		return address_reset_checks_for_testing_.load(
-			std::memory_order_acquire);
-	}
-	/* Times a hold ended with the path still carried and the table read, so
-	 * that libslirp was asked which connections to reset. */
-	[[nodiscard]] std::uint64_t address_reset_calls_for_testing() const noexcept
-	{
-		return address_reset_calls_for_testing_.load(
-			std::memory_order_acquire);
-	}
-	/* Monitors this provider has made: one for its life, however often it is
-	 * stopped and opened, unless the system gave none (then the next open
-	 * makes another). */
-	[[nodiscard]] std::uint64_t path_monitors_made_for_testing() const noexcept
-	{
-		return path_monitors_made_for_testing_.load(
-			std::memory_order_relaxed);
-	}
-	/* The monitor the provider holds now, for a test that waits for what
-	 * its thread says of it. */
-	[[nodiscard]] const uml::platform::HostNetworkPathMonitor *
-	path_monitor_for_testing() const noexcept
-	{
-		return path_monitor_.get();
-	}
-	/* Makes each monitor in place of the platform's own, so that a test has
-	 * the system give none. Applies to the next monitor made. */
-	using PathMonitorFactory = std::function<
-		std::unique_ptr<uml::platform::HostNetworkPathMonitor>(
-			uml::platform::HostNetworkPathState &)>;
-	void set_path_monitor_factory_for_testing(PathMonitorFactory factory)
-	{
-		path_monitor_factory_for_testing_ = std::move(factory);
-	}
 	[[nodiscard]] HostResolver &resolver_for_testing() noexcept
 	{
 		return resolver_;
@@ -392,25 +313,6 @@ private:
 	void process_transmit_queue() noexcept;
 	[[nodiscard]] bool transmit_permitted() noexcept;
 	void wake() noexcept;
-	/* The event loop's part, before it sleeps: reads a new path report into
-	 * the hold, and resets the connections bound to a lost address when the
-	 * hold has ended. A report wakes the loop (notify_callback), which is the
-	 * only thread that calls SLiRP; nothing polls for one. */
-	void check_address_reset() noexcept;
-	/* How long the loop may sleep: the time left of a hold if that is
-	 * less than `timeout`. Nothing exists while no hold is running. */
-	[[nodiscard]] std::uint32_t address_reset_timeout(
-		std::uint32_t timeout) const noexcept;
-	void reset_flows_on_lost_addresses() noexcept;
-	/* Whether the system has reported an outage that the loop has not read
-	 * into the hold yet, or reports one now. */
-	[[nodiscard]] bool path_outage_unread() const noexcept;
-	/* The host's addresses, read now; none when the system cannot list
-	 * them. */
-	[[nodiscard]] std::optional<HostAddresses> read_address_table() noexcept;
-	struct LostAddressQuery;
-	static bool lost_address_callback(slirp_os_socket descriptor,
-					  void *opaque) noexcept;
 #if UML_SLIRP_TESTING
 	void pause_write_before_commit_for_testing() noexcept;
 	void pause_read_before_notification_for_testing() noexcept;
@@ -451,22 +353,6 @@ private:
 	/* Declared before what counts into them. */
 	NetworkCounters counters_;
 	TrafficObserver observer_{counters_};
-	/* The host's network path: the monitor writes it from the system's
-	 * thread and the resolver reads it when it answers. The first open()
-	 * makes the monitor, which then lives as long as the provider and keeps
-	 * the state current across a stop and reopen; the state outlives it. With
-	 * no monitor, or one the system gave no monitor, the state is usable again
-	 * when the provider stops. */
-	uml::platform::HostNetworkPathState path_state_;
-	std::unique_ptr<uml::platform::HostNetworkPathMonitor> path_monitor_;
-	/* The hold and the table it was last judged against, and the reports
-	 * already read: the event loop's own, set up by open() before the worker
-	 * exists, so that a hold never outlives the instance it was started
-	 * for. */
-	AddressResetHold address_reset_hold_;
-	std::optional<HostAddresses> address_reset_table_;
-	std::uint64_t path_reports_seen_{};
-	std::uint64_t path_outages_seen_{};
 	HostResolver resolver_;
 	std::uint16_t next_identification_{1};
 	/* Where SLiRP's guest forward carries DNS over TCP to the resolver;
@@ -493,9 +379,6 @@ private:
 	std::atomic_size_t internet_sockets_for_testing_{};
 	std::uint32_t dns_interface_for_testing_{};
 	bool dns_streams_unavailable_for_testing_{};
-	bool path_monitor_for_testing_{};
-	std::atomic_uint64_t path_monitors_made_for_testing_{};
-	PathMonitorFactory path_monitor_factory_for_testing_;
 	bool write_pause_requested_for_testing_{};
 	bool write_pause_reached_for_testing_{};
 	bool release_write_for_testing_{};
@@ -505,11 +388,6 @@ private:
 	bool receive_cleanup_reached_for_testing_{};
 	std::vector<GuestForward> guest_forwards_for_testing_;
 	std::function<std::optional<HostAddresses>()> address_reader_for_testing_;
-	std::function<std::optional<HostIpv4>(slirp_os_socket)>
-		flow_local_address_for_testing_;
-	std::atomic_uint64_t address_reset_calls_for_testing_{};
-	std::atomic_uint64_t path_reports_handled_for_testing_{};
-	std::atomic_uint64_t address_reset_checks_for_testing_{};
 	std::function<std::chrono::steady_clock::time_point()> clock_for_testing_;
 	std::atomic_uint64_t host_address_reads_for_testing_{};
 #endif

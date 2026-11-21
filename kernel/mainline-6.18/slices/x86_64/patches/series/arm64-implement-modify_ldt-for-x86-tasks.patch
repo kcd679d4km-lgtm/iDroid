@@ -303,7 +303,7 @@ index e2b7a3efea0cfccde4ed0f388fee7b46ed540455..bf9d9d8a789afb0e9718d9f6b0482a03
  static_assert(sizeof(struct uml_x86_32_user_desc) ==
  	sizeof(((struct uml_pt_regs *)0)->compat_tls[0]));
 diff --git a/arch/um/include/asm/mm_hooks.h b/arch/um/include/asm/mm_hooks.h
-index 100f5c3b00671e01248150642025c6ea0139b0d5..22b6b173665031621f23b09f37a4739f6bdecab8 100644
+index 2427d23ff06b608042a4b2eec8c8b4438a19a56a..3552cbdf6de90e19c7659f0ea8662cae83ffda3a 100644
 --- a/arch/um/include/asm/mm_hooks.h
 +++ b/arch/um/include/asm/mm_hooks.h
 @@ -6,6 +6,12 @@
@@ -316,17 +316,17 @@ index 100f5c3b00671e01248150642025c6ea0139b0d5..22b6b173665031621f23b09f37a4739f
 +void uml_x86_ldt_free(struct mm_struct *mm);
 +#endif
 +
+ #ifdef CONFIG_UML_DARWIN_MM_SHARED
  int arch_dup_mmap(struct mm_struct *oldmm, struct mm_struct *mm);
- 
- void arch_exit_mmap(struct mm_struct *mm);
+ #else
 diff --git a/arch/um/include/asm/mmu.h b/arch/um/include/asm/mmu.h
-index 9b73b2b32531998bbd5b6d61b0609e4e1b05da8f..2003c0cad54e44d4d6b41d8b367f136ee9cd8f4e 100644
+index 4dd32155d3f216cd86b2d5943048e6d3bd06e898..d624443ad86081422f6c7ddc58885aff7617217a 100644
 --- a/arch/um/include/asm/mmu.h
 +++ b/arch/um/include/asm/mmu.h
-@@ -44,6 +44,16 @@ typedef struct mm_context {
- 	 * then leaves the VMAs fork cannot have changed alone.
- 	 */
- 	struct task_struct *darwin_fork_flusher;
+@@ -34,6 +34,16 @@ typedef struct mm_context {
+ #ifdef CONFIG_UML_ARM64_VDSO
+ 	/* Where the task's vDSO is mapped, or 0 if it has none. */
+ 	unsigned long vdso;
 +#endif
 +#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
 +	/*
@@ -353,22 +353,22 @@ index 4f94a043ff6518da1eb331931e677e96f2ebe5bb..26cd771730004f8ca702a6a4fa48e983
  extern char *uml_strdup(const char *string);
  int uml_need_resched(void);
 diff --git a/arch/um/kernel/skas/mmu_darwin.c b/arch/um/kernel/skas/mmu_darwin.c
-index 30fbcd330fc60626cce2fa5b890b8845707222a3..bfd1cf9ab9c517a41f0d29144d4cf58089c6da12 100644
+index 7a70e528b66dd95c7102ff2f8bc335907c18c985..2a704fcdc2dc64f45e6d1fbe8e47da133e3e9c16 100644
 --- a/arch/um/kernel/skas/mmu_darwin.c
 +++ b/arch/um/kernel/skas/mmu_darwin.c
-@@ -129,7 +129,11 @@ int arch_dup_mmap(struct mm_struct *oldmm, struct mm_struct *mm)
+@@ -119,7 +119,11 @@ int arch_dup_mmap(struct mm_struct *oldmm, struct mm_struct *mm)
+ {
  	if (READ_ONCE(oldmm->context.darwin_maps_shared) && maps_shared(mm))
  		WRITE_ONCE(mm->context.darwin_maps_shared, 1);
- #endif
 +#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
 +	return uml_x86_ldt_dup(oldmm, mm);
 +#else
  	return 0;
 +#endif
  }
+ #endif
  
- int arch_unmap_one(struct mm_struct *mm, struct vm_area_struct *vma,
-@@ -162,6 +166,10 @@ int init_new_context(struct task_struct *task, struct mm_struct *mm)
+@@ -151,6 +155,10 @@ int init_new_context(struct task_struct *task, struct mm_struct *mm)
  #ifdef CONFIG_UML_DARWIN_MM_SHARED
  	mm->context.darwin_maps_shared = 0;
  	atomic_set(&mm->context.darwin_ring_pins, 0);
@@ -379,7 +379,7 @@ index 30fbcd330fc60626cce2fa5b890b8845707222a3..bfd1cf9ab9c517a41f0d29144d4cf580
  #endif
  	id->stack = 0;
  	id->sock = -1;
-@@ -181,4 +189,7 @@ void destroy_context(struct mm_struct *mm)
+@@ -170,4 +178,7 @@ void destroy_context(struct mm_struct *mm)
  		      id->darwin_generation);
  	id->darwin_context = NULL;
  	id->pid = -1;

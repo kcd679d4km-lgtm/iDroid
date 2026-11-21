@@ -310,7 +310,7 @@ struct SendFeedbackScreenTests {
         sheet.form.problem = "An idea"
         sheet.form.details = "Details"
         #expect(sheet.state.canSend && sheet.state.canAddMedia)
-        sheet.sendAnyway()
+        sheet.send()
         let request = try #require(fixture.composer.request)
         #expect(request.body.contains("Running: no"))
         sheet.close()
@@ -403,12 +403,12 @@ struct SendFeedbackScreenTests {
         #expect(await eventually { started.isOpen })
         #expect(sheet.state.importingMedia, "the state began before the file was there")
         #expect(!sheet.state.canSend && !sheet.state.canAddMedia && !sheet.state.canMakeBugReport)
-        sheet.sendAnyway()
+        sheet.send()
         #expect(fixture.composer.request == nil, "Send waits for the files it will carry")
         gate.release()
         await importing.value
         #expect(!sheet.state.importingMedia && sheet.state.canSend && sheet.form.attachments.count == 1)
-        sheet.sendAnyway()
+        sheet.send()
         #expect(fixture.composer.request?.attachments.count == 1)
         sheet.close()
     }
@@ -460,7 +460,7 @@ struct SendFeedbackScreenTests {
         sheet.form.details = "It stops every time."
         sheet.createBugReport()
         #expect(await eventually { sheet.form.attachments.bugReport != nil })
-        sheet.sendAnyway()
+        sheet.send()
         let request = try #require(fixture.composer.request)
         #expect(request.address == "feedback@example.com")
         #expect(request.subject == "Andarium feedback: Game freezes after the intro")
@@ -477,7 +477,6 @@ struct SendFeedbackScreenTests {
         }
         #expect(keys == [
             "App", "Device", "iOS", "Language", "Virtual machine", "Android", "Running", "Free space", "Thermal state",
-            "Frame rate limit when hot",
         ])
         #expect(!request.body.contains(NSHomeDirectory()))
         sheet.close()
@@ -496,7 +495,7 @@ struct SendFeedbackScreenTests {
         #expect(await eventually { sheet.form.attachments.bugReport != nil })
         sheet.takeScreenshot()
         #expect(await eventually { sheet.form.attachments.items.contains { $0.kind == .screenshot } })
-        sheet.sendAnyway()
+        sheet.send()
         let request = try #require(fixture.composer.request)
         // `bugreport-yyyyMMdd-HHmmss.zip` and `screenshot-yyyyMMdd-HHmmss.png`: fixed English words, a fixed
         // pattern of ASCII digits, whatever the interface language or the device's calendar and digits.
@@ -512,21 +511,21 @@ struct SendFeedbackScreenTests {
     @Test func sendNeedsAProblemDetailsAndAnAvailableComposer() {
         let fixture = fixture()
         let sheet = fixture.sheet()
-        sheet.sendAnyway()
+        sheet.send()
         #expect(fixture.composer.request == nil && sheet.incomplete == .both && sheet.failure == nil)
         sheet.incomplete = nil
         sheet.form.problem = "x"
-        sheet.sendAnyway()
+        sheet.send()
         #expect(fixture.composer.request == nil && sheet.incomplete == .details)
         sheet.incomplete = nil
         sheet.form.problem = " \n "
         sheet.form.details = "y"
-        sheet.sendAnyway()
+        sheet.send()
         #expect(fixture.composer.request == nil && sheet.incomplete == .problem)
         sheet.incomplete = nil
         sheet.form.problem = "x"
         fixture.app.feedbackServices.presentMail = { _, _ in false }
-        sheet.sendAnyway()
+        sheet.send()
         #expect(sheet.incomplete == nil && sheet.failure?.title == "Mail not opened")
         sheet.close()
     }
@@ -538,7 +537,7 @@ struct SendFeedbackScreenTests {
         await sheet.importMedia([picked])
         sheet.form.problem = "x"
         let before = sheet.form
-        sheet.sendAnyway()
+        sheet.send()
         #expect(sheet.incomplete == .details && sheet.form == before && fixture.composer.request == nil)
         sheet.close()
     }
@@ -546,7 +545,7 @@ struct SendFeedbackScreenTests {
     @Test func withoutMailNothingIsAskedAboutEither() {
         let fixture = fixture(mail: false)
         let sheet = fixture.sheet()
-        sheet.sendAnyway()
+        sheet.send()
         #expect(sheet.incomplete == nil && fixture.composer.request == nil && sheet.failure == nil)
         sheet.close()
     }
@@ -556,13 +555,13 @@ struct SendFeedbackScreenTests {
         let sheet = fixture.sheet()
         sheet.form.problem = "x"
         sheet.form.details = "Details"
-        sheet.sendAnyway()
+        sheet.send()
         fixture.composer.leave(.cancelled)
         #expect(!sheet.sent && sheet.form.problem == "x" && sheet.failure == nil)
-        sheet.sendAnyway()
+        sheet.send()
         fixture.composer.leave(.saved)
         #expect(!sheet.sent && sheet.form.problem == "x" && sheet.failure == nil)
-        sheet.sendAnyway()
+        sheet.send()
         fixture.composer.leave(.failed("The operation couldn\u{2019}t be completed."))
         #expect(sheet.failure?.message == "The operation couldn\u{2019}t be completed.")
         #expect(!sheet.sent && sheet.form.problem == "x")
@@ -589,7 +588,7 @@ struct SendFeedbackScreenTests {
         let before = sheet.form
         let pictures = Set(sheet.thumbnails.keys)
         #expect(!pictures.isEmpty)
-        sheet.sendAnyway()
+        sheet.send()
         fixture.composer.leave(.sent)
         #expect(sheet.sent && !sheet.closed)
         // What was sent is still the sheet's: the text, the list, the pictures and the files behind them.
@@ -602,7 +601,7 @@ struct SendFeedbackScreenTests {
         let state = sheet.state
         #expect(!state.fieldsEnabled && !state.canSend && !state.readyToSend && !state.canMakeBugReport
                 && !state.canTakeScreenshot && !state.canAddMedia && !state.canAddFiles)
-        sheet.sendAnyway()
+        sheet.send()
         sheet.takeScreenshot()
         sheet.createBugReport()
         sheet.pickFiles()
@@ -621,7 +620,7 @@ struct SendFeedbackScreenTests {
     @Test func theNextSheetAfterASendIsEmpty() async throws {
         let fixture = fixture()
         let sheet = try await filledSheet(in: fixture)
-        sheet.sendAnyway()
+        sheet.send()
         fixture.composer.leave(.sent)
         sheet.close()
         let next = fixture.sheet()
@@ -634,7 +633,7 @@ struct SendFeedbackScreenTests {
     @Test func theFilesAreLetGoOnceAndNoLaterLookAtTheFolderRemovesAnything() async throws {
         let fixture = fixture()
         let sheet = try await filledSheet(in: fixture)
-        sheet.sendAnyway()
+        sheet.send()
         fixture.composer.leave(.sent)
         sheet.close()
         // What a second removal would take is not there to take: a file that appears after the close stays.
@@ -653,7 +652,7 @@ struct SendFeedbackScreenTests {
         sheet.form.problem = "x"
         sheet.form.details = "Details"
         #expect(sheet.information.runningSeconds == 125)
-        sheet.sendAnyway()
+        sheet.send()
         let body = try #require(fixture.composer.request).body
         fixture.app.feedbackServices.runningSeconds = { _ in 999 }
         #expect(sheet.information.runningSeconds == 999, "until the mail is sent the block is the app's, live")
@@ -669,7 +668,7 @@ struct SendFeedbackScreenTests {
             let sheet = try await filledSheet(in: fixture)
             let staged = sheet.form.attachments.items.map(\.url)
             let before = sheet.form
-            sheet.sendAnyway()
+            sheet.send()
             fixture.composer.leave(result)
             #expect(!sheet.sent && sheet.form == before && !sheet.closed, "\(result)")
             #expect(staged.allSatisfy { FileManager.default.fileExists(atPath: $0.path) }, "\(result)")
@@ -677,7 +676,7 @@ struct SendFeedbackScreenTests {
             // The block is the app's again, and a second try opens the composer again.
             fixture.app.feedbackServices.runningSeconds = { _ in 999 }
             #expect(sheet.information.runningSeconds == 999, "\(result)")
-            sheet.sendAnyway()
+            sheet.send()
             #expect(fixture.composer.opened == 2, "\(result)")
             // In the background a draft that was not sent keeps its files.
             sheet.applicationEnteredBackground()
@@ -693,7 +692,7 @@ struct SendFeedbackScreenTests {
         let sheet = try await filledSheet(in: fixture)
         let staged = sheet.form.attachments.items.map(\.url)
         let before = sheet.form
-        sheet.sendAnyway()
+        sheet.send()
         fixture.composer.leave(.sent)
         // The application goes to the background and may be ended there: no staged file is left.
         sheet.applicationEnteredBackground()
@@ -711,7 +710,7 @@ struct SendFeedbackScreenTests {
         do {
             let sheet = try await filledSheet(in: fixture)
             url = sheet.folder.url
-            sheet.sendAnyway()
+            sheet.send()
             fixture.composer.leave(.sent)
             #expect(FileManager.default.fileExists(atPath: try #require(url).path))
         }
@@ -740,7 +739,7 @@ struct SendFeedbackScreenTests {
             model.form.problem = "Game freezes"
             model.form.details = "The picture stops after the intro."
             await model.importMedia([photo])
-            model.sendAnyway()
+            model.send()
             fixture.composer.leave(.sent)
         }
         let lease = try await HostWindow.take()
@@ -803,7 +802,7 @@ struct SendFeedbackScreenTests {
         #expect(fixture.app.busy == nil && sheet.form.attachments.isEmpty)
         sheet.form.problem = "x"
         sheet.form.details = "Details"
-        sheet.sendAnyway()
+        sheet.send()
         #expect(fixture.composer.request == nil)
         // The person adds an account in iOS Settings and comes back.
         fixture.app.feedbackServices.canSendMail = { true }

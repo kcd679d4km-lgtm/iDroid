@@ -11,13 +11,7 @@ what is staged and packaged; it reads no kernel checkout and runs no build.
 Android release (--android-release):
   - the staged system (.build/andarium-system) and, with --app, the packaged
     one are the release android/lineage-24/metadata/accepted-release.env
-    selects. A manifest that is not marked accepted fails, an unsigned proof
-    image (Andarium/scripts/stage-system-image.py --unsigned-proof, for
-    developer builds) by name, whatever release ID it carries. The staged and
-    the packaged system disk are tied to the accepted release as installed
-    below .build/android/releases (install-release.py), whose own layout names
-    the digest: a manifest that says accepted over another disk fails. The
-    manifests and layouts are read refusing a repeated JSON key;
+    selects, and the packaged system disk matches its partition layout;
   - the Git object ID of every input path of the release
     (android/lineage-24/support/release/input-paths.tsv) equals the one the
     descriptor records. A changed input fails, naming the path and the commits
@@ -34,30 +28,6 @@ Kernel bundle (--kernel android|arm64|x86_64):
     request, as the build's own check does. The bundle manifest records no
     configuration identity, so a symbol removed from a fragment, which falls
     back to its default, is the one change this cannot see.
-
-AOT artifact (--aot):
-  - without an accepted descriptor (android/lineage-24/metadata/accepted-aot.env)
-    an application that packages UmlArm64Aot.framework fails. The descriptor's
-    archive field (LINEAGE24_ACCEPTED_AOT_ARCHIVES) is the one switch that lets
-    an App Store or TestFlight archive carry the component: a framework in an
-    archive while it is "no" fails, and so does an archive without one while
-    it is "yes";
-  - a packaged runtime framework whose load commands name UmlArm64Aot.framework
-    fails an application that carries no such framework, whatever the switch
-    says: dyld refuses to launch an application that lacks a framework its
-    runtime links (the descriptor and the switch decide the build, this decides
-    the product);
-  - the packaged framework's code section is the blob the descriptor names
-    (SHA-256), and the descriptor is for the accepted Android release;
-  - that blob names the packaged system: the release ID, the manifest digest
-    and the system partition digest in its header are the packaged system's own
-    (release-manifest.json and guest/partition-layout.json), the values the
-    runtime compares at launch, so an archive never carries a blob the
-    application would not run;
-  - the artifact installed below .build/android/aot is the one the descriptor
-    names, and every file its blob is a function of (tools/aot, the decode
-    partitions, the library list) equals what it was built with: a changed
-    one is pending, as for the other artifacts.
 
 The inputs, the descriptors and the files the checks read must be clean in the
 work tree: an uncommitted change would be archived without a commit that
@@ -83,6 +53,7 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import gzip
 import hashlib
+import json
 import os
 import re
 import struct
@@ -90,24 +61,15 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
-for _tools in ("kernel/common/artifacts", "android/lineage-24/tools", "tools/aot"):
+for _tools in ("kernel/common/artifacts", "android/lineage-24/tools"):
     sys.path.insert(0, str(HERE / _tools))
 import contract_checks  # noqa: E402
-import release_artifact  # noqa: E402
 import release_inputs  # noqa: E402
 
 DECISION_ENV = "PENDING_INPUTS_DECISION"
 ANDROID_DESCRIPTOR = "android/lineage-24/metadata/accepted-release.env"
 INPUT_TREES_KEY = "LINEAGE24_ACCEPTED_INPUT_TREES"
-UNSIGNED_PROOF = "unsigned-proof"
 STAGED_SYSTEM = ".build/andarium-system"
-# Where install-release.py installs a release, below the work tree.
-INSTALLED_RELEASES = ".build/android/releases"
-# The AOT artifact beside it, and where the framework holds its blob.
-INSTALLED_AOT = ".build/android/aot"
-AOT_NAME = "UmlArm64Aot"
-PACKAGED_AOT = f"Frameworks/{AOT_NAME}.framework/{AOT_NAME}"
-AOT_SECTION = ("__TEXT", "__text")
 PACKAGED_SYSTEM = "andarium-system"
 MANIFEST = "release-manifest.json"
 LAYOUT = "guest/partition-layout.json"
@@ -282,7 +244,13 @@ def commit_lines(commits):
 
 
 def read_json(path):
-    return contract_checks.load_json_object(path, ValueError)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ValueError(f"cannot read {path}: {error}") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} is not a JSON object")
+    return value
 
 
 def sha256_file(path):
@@ -314,22 +282,6 @@ def check_staged_system(report, release_id, descriptor, system, label):
     except ValueError as error:
         report.error(f"{label} has an unreadable manifest", str(error))
         return None
-    acceptance = manifest.get("acceptance")
-    if acceptance != "accepted":
-        # An accepted release's manifest says so; the proof image of a
-        # developer build says it is a proof. Neither the release ID nor any
-        # other field a proof shares with the release can stand in for it.
-        what = (
-            "an unsigned proof image, which only a developer build embeds"
-            if acceptance == UNSIGNED_PROOF
-            else f"not an accepted release (acceptance {acceptance!r})"
-        )
-        report.error(
-            f"{label} is {what}",
-            f"{system}: stage the accepted release with Andarium/scripts/stage-system-image.py, "
-            "without --unsigned-proof",
-        )
-        return manifest
     if manifest.get("release_id") != release_id:
         report.error(
             f"{label} is release {manifest.get('release_id')}, not the accepted {release_id}",
@@ -349,9 +301,7 @@ def check_staged_system(report, release_id, descriptor, system, label):
     return manifest
 
 
-def check_packaged_disk(report, staged, packaged, release_id, expected):
-    """The packaged manifest, layout and command line are the staged ones, and
-    the packaged system disk is the accepted release's (`expected`, its digest)."""
+def check_packaged_disk(report, staged, packaged, release_id):
     for relative in (MANIFEST, LAYOUT, "boot/kernel-command-line.txt"):
         theirs = packaged / relative
         ours = staged / relative
@@ -361,98 +311,18 @@ def check_packaged_disk(report, staged, packaged, release_id, expected):
                 f"{theirs} differs from {ours}; package from the staged system in the same run",
             )
             return
-    if expected is None:
-        return
     try:
-        recorded = read_json(packaged / LAYOUT)["system_disk"]["sha256"]
+        layout = read_json(packaged / LAYOUT)
+        recorded = layout["system_disk"]["sha256"]
     except (ValueError, KeyError, TypeError) as error:
         report.error("the packaged partition layout names no system disk digest", str(error))
         return
     disk = packaged / SYSTEM_DISK
-    if recorded != expected or not disk.is_file() or sha256_file(disk) != expected:
+    if not disk.is_file() or sha256_file(disk) != recorded:
         report.error(
             f"the packaged system disk is not the one of release {release_id}",
-            f"{disk} does not match the digest of the installed accepted release, which "
-            f"{LAYOUT} must name",
+            f"{disk} does not match the digest in {LAYOUT}",
         )
-
-
-def installed_disk_digest(repo, report, descriptor, release_id):
-    """The system disk digest of the accepted release as installed below the
-    work tree, which the accepted descriptor selects by its directory name, or
-    None after reporting why there is none. The staged and the packaged disk
-    are tied to it, not to a digest their own layout names."""
-    name = descriptor.get("LINEAGE24_ACCEPTED_DIRECTORY_NAME")
-    if not name or "/" in name or name in (".", ".."):
-        report.error("the accepted descriptor names no release directory", ANDROID_DESCRIPTOR)
-        return None
-    installed = repo / INSTALLED_RELEASES / name
-    try:
-        manifest = read_json(installed / MANIFEST)
-        digest = read_json(installed / LAYOUT)["system_disk"]["sha256"]
-    except (ValueError, KeyError, TypeError) as error:
-        report.error(
-            f"the accepted Android release {release_id} is not installed here, so the system "
-            "disk cannot be tied to it",
-            f"{installed}: install it with android/lineage-24/tools/install-release.py ({error})",
-        )
-        return None
-    if manifest.get("release_id") != release_id or manifest.get("acceptance") != "accepted":
-        report.error(
-            f"the release installed as {name} is not the accepted {release_id}",
-            f"{installed / MANIFEST} names another release or is not marked accepted",
-        )
-        return None
-    # Without a digest to tie to, both disk checks would be skipped.
-    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
-        report.error(
-            f"the accepted Android release {release_id} installed as {name} names no usable "
-            "system disk digest",
-            f"{installed / LAYOUT}: system_disk.sha256 must be 64 lowercase hexadecimal digits",
-        )
-        return None
-    return digest
-
-
-def check_staged_disk(report, staged, label, expected):
-    """The staged system disk is the accepted release's: its layout names the
-    digest and the disk hashes to it."""
-    try:
-        recorded = read_json(staged / LAYOUT)["system_disk"]["sha256"]
-    except (ValueError, KeyError, TypeError) as error:
-        report.error(f"{label} has a partition layout that names no system disk digest", str(error))
-        return
-    disk = staged / SYSTEM_DISK
-    if recorded != expected or not disk.is_file() or sha256_file(disk) != expected:
-        report.error(
-            f"the system disk of {label} is not the accepted release's",
-            f"{disk} does not match the digest of the installed accepted release",
-        )
-
-
-NEW_INPUT = "is an input now and was not when the release was built"
-
-
-def input_findings(recorded, paths, current):
-    """(path, what, recorded object ID or None) for each input path that
-    differs from what a release recorded. `current` maps the list's paths to
-    their object IDs here, None for a path the commit lacks. A path the list
-    gained since the release is NEW_INPUT: pending until a release carries it."""
-    findings = []
-    for path in sorted(set(recorded) | set(paths)):
-        if path not in recorded:
-            findings.append((path, NEW_INPUT, None))
-        elif path not in current:
-            findings.append((path, "is no longer an input of the list", None))
-        elif current[path] is None:
-            findings.append((path, f"was removed (recorded {short(recorded[path])})", None))
-        elif current[path] != recorded[path]:
-            findings.append((
-                path,
-                f"changed (recorded {short(recorded[path])}, now {short(current[path])})",
-                recorded[path],
-            ))
-    return findings
 
 
 def check_android(repo, report, staged_root, app):
@@ -465,12 +335,9 @@ def check_android(repo, report, staged_root, app):
         return
     label = f"the Android release {release_id}"
 
-    expected = installed_disk_digest(repo, report, descriptor, release_id)
     staged = staged_root
     staged_manifest = check_staged_system(
         report, release_id, descriptor, staged, f"the staged system ({label})")
-    if staged_manifest is not None and expected is not None:
-        check_staged_disk(report, staged, f"the staged system ({label})", expected)
     if app is not None:
         packaged = app / PACKAGED_SYSTEM
         packaged_manifest = check_staged_system(
@@ -480,7 +347,7 @@ def check_android(repo, report, staged_root, app):
             and staged_manifest.get("release_id") == release_id
             and packaged_manifest.get("release_id") == release_id
         ):
-            check_packaged_disk(report, staged, packaged, release_id, expected)
+            check_packaged_disk(report, staged, packaged, release_id)
 
     recorded_text = descriptor.get(INPUT_TREES_KEY)
     if recorded_text is None:
@@ -497,7 +364,20 @@ def check_android(repo, report, staged_root, app):
         report.error(f"the accepted descriptor's input trees are malformed: {error}")
         return
     current = object_ids_at(repo, paths)
-    findings = input_findings(recorded, paths, current)
+    findings = []
+    for path in sorted(set(recorded) | set(paths)):
+        if path not in recorded:
+            findings.append((path, "is an input now and was not when the release was built", None))
+        elif path not in current:
+            findings.append((path, "is no longer an input of the list", None))
+        elif current[path] is None:
+            findings.append((path, f"was removed (recorded {short(recorded[path])})", None))
+        elif current[path] != recorded[path]:
+            findings.append((
+                path,
+                f"changed (recorded {short(recorded[path])}, now {short(current[path])})",
+                recorded[path],
+            ))
     if not findings:
         report.note(f"{label}: its {len(recorded)} input paths are the ones on this commit")
         return
@@ -517,135 +397,6 @@ def check_android(repo, report, staged_root, app):
         release_id,
         f"{label} is behind this commit: {len(findings)} input path"
         f"{'s' if len(findings) != 1 else ''} differ from what it was built from",
-        *details,
-    )
-
-
-# -------------------------------------------------------------------- AOT --
-
-
-def check_blob_release(report, app, blob):
-    """The packaged blob is the one the packaged system selects at launch:
-    the runtime runs the component only when the release the blob names (its
-    ID, manifest digest and system partition digest) is the release it boots,
-    which the staged system's own files state. Anything else would archive an
-    application that silently runs without it."""
-    try:
-        _, _, named = release_artifact.parse_blob_header(blob[:release_artifact.BLOB_HEADER_BYTES])
-        booted = release_artifact.release_identity(app / PACKAGED_SYSTEM)
-    except release_artifact.ArtifactError as error:
-        report.error("the packaged AOT blob cannot be compared with the packaged system", str(error))
-        return
-    differing = [key for key in release_artifact.RELEASE_KEYS if named[key] != booted[key]]
-    if differing:
-        report.error(
-            "the packaged AOT blob was not made from the packaged system, so the application would run without it",
-            f"{', '.join(differing)} differ between the blob's header and {PACKAGED_SYSTEM}",
-        )
-    else:
-        report.note("the packaged AOT blob is made from the packaged system")
-
-
-def check_aot(repo, report, app):
-    descriptor_path = repo / release_artifact.ACCEPTED_DESCRIPTOR
-    accepted = None
-    if descriptor_path.exists():
-        try:
-            accepted = release_artifact.read_accepted(descriptor_path)
-        except release_artifact.ArtifactError as error:
-            report.error("the accepted AOT descriptor is unreadable", str(error))
-            return
-    framework = app / PACKAGED_AOT if app is not None else None
-    packaged = framework is not None and framework.exists()
-    if app is not None and not packaged:
-        # A runtime that links the component needs it to launch, whatever the
-        # descriptor says: the build asked for it by name or by default.
-        linking, unreadable = runtimes_requiring(app, AOT_NAME)
-        for runtime, reason in unreadable:
-            report.error(
-                f"the packaged framework {runtime} cannot be read as a Mach-O file, "
-                f"so what it links is unknown", reason)
-        for runtime in linking:
-            report.error(
-                f"the packaged runtime {runtime} links {AOT_NAME}.framework, but the application carries no AOT framework",
-                f"{PACKAGED_AOT} is missing, and dyld refuses to launch an application without a framework its runtime links",
-            )
-    if accepted is None:
-        if packaged:
-            report.error(
-                "the application carries the AOT component, but no AOT artifact is accepted",
-                f"{release_artifact.ACCEPTED_DESCRIPTOR} names none",
-            )
-        else:
-            report.note("no AOT artifact is accepted, and the application carries none")
-        return
-    release_id = accepted["LINEAGE24_ACCEPTED_AOT_RELEASE_ID"]
-    label = f"the AOT artifact of {release_id}"
-    archives = accepted[release_artifact.ARCHIVES_KEY] == "yes"
-    try:
-        release = descriptor_of(repo, ANDROID_DESCRIPTOR)
-        release_directory = release["LINEAGE24_ACCEPTED_DIRECTORY_NAME"]
-        accepted_release = release["LINEAGE24_ACCEPTED_RELEASE_ID"]
-    except (ValueError, KeyError) as error:
-        report.error("the Android release descriptor is unreadable", str(error))
-        return
-    if accepted_release != release_id:
-        report.error(f"{label} is not for the accepted Android release {accepted_release}")
-        return
-    if packaged and not archives:
-        report.error(
-            "the application carries the AOT component, which no archive may yet",
-            f"{release_artifact.ACCEPTED_DESCRIPTOR} sets {release_artifact.ARCHIVES_KEY} to no",
-        )
-    if app is not None and archives and not packaged:
-        report.error(
-            f"{label} is accepted for archives, but the application carries no AOT framework",
-            f"{PACKAGED_AOT} is missing",
-        )
-    if packaged:
-        blob = macho_section(framework, AOT_SECTION)
-        if blob is None:
-            report.error(f"the packaged AOT framework has no {AOT_SECTION[1]} section")
-        else:
-            digest = hashlib.sha256(blob).hexdigest()
-            recorded = accepted["LINEAGE24_ACCEPTED_AOT_BLOB_SHA256"]
-            if digest != recorded:
-                report.error(
-                    f"the packaged AOT framework is not the blob of {label}",
-                    f"it holds {digest}; the descriptor names {recorded}",
-                )
-            else:
-                report.note(f"the packaged AOT framework is the blob of {label}")
-                check_blob_release(report, app, blob)
-
-    installed = repo / INSTALLED_AOT / release_directory
-    if not installed.is_dir():
-        if packaged or archives:
-            report.pend(
-                f"aot-{release_id}",
-                f"{label} is not installed, so its tools cannot be compared with this commit",
-                f"expected at {INSTALLED_AOT}/{release_directory} (install-release.py --aot-artifact)",
-            )
-        return
-    try:
-        description = release_artifact.verify(
-            installed, repo=repo, accepted=descriptor_path, generator=False)
-    except release_artifact.ArtifactError as error:
-        report.error(f"the installed AOT artifact is not the accepted one: {error}")
-        return
-    changed = release_artifact.generator_changes(description, repo)
-    if not changed:
-        report.note(f"{label}: its generator inputs are the ones on this commit")
-        return
-    details = []
-    for path in changed:
-        details.append(path)
-        for line in commit_lines(commits_touching(repo, path)):
-            details.append(f"    {line}")
-    report.pend(
-        f"aot-{release_id}",
-        f"{label} is behind this commit: {len(changed)} generator input"
-        f"{'s' if len(changed) != 1 else ''} differ from what it was built with",
         *details,
     )
 
@@ -708,18 +459,11 @@ def config_mismatches(repo, kernel, config_text):
     return problems
 
 
-class MachOError(ValueError):
-    """A Mach-O file that is cut short or lists a load command that is."""
-
-
 def thin_offset(data):
     if len(data) < 8:
         return None
     if struct.unpack_from(">I", data, 0)[0] == 0xCAFEBABE:
-        count = min(struct.unpack_from(">I", data, 4)[0], 16)
-        if len(data) < 8 + 20 * count:
-            raise MachOError("the fat header is cut short")
-        for index in range(count):
+        for index in range(min(struct.unpack_from(">I", data, 4)[0], 16)):
             cpu, _, offset, _, _ = struct.unpack_from(">IIIII", data, 8 + 20 * index)
             if cpu == 0x0100000C:
                 return offset
@@ -728,95 +472,27 @@ def thin_offset(data):
 
 
 def macho_section(path, wanted):
-    """The bytes of one section of an arm64 Mach-O file, or None (a file that
-    is not one, or is cut short, has no such section)."""
+    """The bytes of one section of an arm64 Mach-O file, or None."""
     data = path.read_bytes()
-    try:
-        base = thin_offset(data[:4096])
-        if base is None:
-            return None
-        count = struct.unpack_from("<I", data, base + 16)[0]
-        position = base + 32
-        for _ in range(count):
-            command, size = struct.unpack_from("<II", data, position)
-            if command == 0x19:  # LC_SEGMENT_64
-                sections = struct.unpack_from("<I", data, position + 64)[0]
-                entry = position + 72
-                for _ in range(sections):
-                    name = data[entry:entry + 16].rstrip(b"\0").decode("ascii", "replace")
-                    segment = data[entry + 16:entry + 32].rstrip(b"\0").decode("ascii", "replace")
-                    length, offset = struct.unpack_from("<QI", data, entry + 40)
-                    if (segment, name) == wanted:
-                        return data[base + offset:base + offset + length]
-                    entry += 80
-            position += size
-    except (MachOError, struct.error):
-        return None
-    return None
-
-
-# The load commands that make dyld refuse to launch an image whose dependency
-# is missing: LC_LOAD_DYLIB, LC_LOAD_UPWARD_DYLIB, LC_REEXPORT_DYLIB and
-# LC_LAZY_LOAD_DYLIB. LC_LOAD_WEAK_DYLIB (0x80000018) lets the image launch.
-STRONG_DYLIB_COMMANDS = frozenset({0x0C, 0x20, 0x8000001F, 0x80000023})
-
-
-def macho_dylibs(path):
-    """The install names an arm64 Mach-O file requires at launch, in load
-    command order; an empty list for any file that is not one. Raises
-    MachOError for one that is cut short: a fat header, the load commands or
-    a dylib command that ends before its own header does."""
-    try:
-        data = path.read_bytes()
-    except OSError:
-        return []
     base = thin_offset(data[:4096])
     if base is None:
-        return []
-    if len(data) < base + 32:
-        raise MachOError("the Mach-O header is cut short")
+        return None
     count = struct.unpack_from("<I", data, base + 16)[0]
     position = base + 32
-    names = []
-    for index in range(count):
-        if position + 8 > len(data):
-            raise MachOError(f"load command {index} starts past the end of the file")
+    for _ in range(count):
         command, size = struct.unpack_from("<II", data, position)
-        if size < 8 or position + size > len(data):
-            raise MachOError(f"load command {index} is shorter than its header or runs past the end of the file")
-        if command in STRONG_DYLIB_COMMANDS:
-            if size < 24:
-                raise MachOError(f"dylib load command {index} is shorter than its header")
-            offset = struct.unpack_from("<I", data, position + 8)[0]
-            if not 24 <= offset < size:
-                raise MachOError(f"dylib load command {index} names its dependency outside itself")
-            raw = data[position + offset:position + size]
-            names.append(raw.split(b"\0", 1)[0].decode("utf-8", "replace"))
+        if command == 0x19:  # LC_SEGMENT_64
+            sections = struct.unpack_from("<I", data, position + 64)[0]
+            entry = position + 72
+            for _ in range(sections):
+                name = data[entry:entry + 16].rstrip(b"\0").decode("ascii", "replace")
+                segment = data[entry + 16:entry + 32].rstrip(b"\0").decode("ascii", "replace")
+                length, offset = struct.unpack_from("<QI", data, entry + 40)
+                if (segment, name) == wanted:
+                    return data[base + offset:base + offset + length]
+                entry += 80
         position += size
-    return names
-
-
-def runtimes_requiring(app, framework_name):
-    """(the embedded frameworks, by name, whose load commands require
-    `<framework_name>.framework/<framework_name>`, and those that cannot be
-    read as (name, reason))."""
-    wanted = f"/{framework_name}.framework/{framework_name}"
-    frameworks = app / "Frameworks"
-    found, unreadable = [], []
-    if not frameworks.is_dir():
-        return found, unreadable
-    for directory in sorted(frameworks.glob("*.framework")):
-        if directory.stem == framework_name:
-            continue
-        binary = directory / directory.stem
-        if not binary.is_file():
-            continue
-        try:
-            if any(name.endswith(wanted) for name in macho_dylibs(binary)):
-                found.append(directory.stem)
-        except MachOError as error:
-            unreadable.append((directory.stem, str(error)))
-    return found, unreadable
+    return None
 
 
 def kernel_banner_releases(image):
@@ -964,14 +640,12 @@ def main(argv=None):
                         help="check the accepted Android release")
     parser.add_argument("--kernel", action="append", default=[], choices=sorted(KERNELS),
                         help="check an accepted kernel bundle (repeatable)")
-    parser.add_argument("--aot", action="store_true",
-                        help="check the AOT artifact and, with --app, the framework that packages it")
     parser.add_argument("--decision", default=None,
                         help=f"the release IDs the user decided to ship as they are "
                              f"(default: ${DECISION_ENV})")
     options = parser.parse_args(argv)
-    if not options.android_release and not options.kernel and not options.aot:
-        parser.error("name an artifact: --android-release, --kernel or --aot")
+    if not options.android_release and not options.kernel:
+        parser.error("name an artifact: --android-release or --kernel")
 
     repo = options.repository.resolve()
     decisions = parse_decisions(
@@ -990,9 +664,6 @@ def main(argv=None):
             covered += release_inputs.input_paths(repo / release_inputs.LIST_RELATIVE)
         except release_inputs.InputError:
             pass  # check_android reports the unreadable list
-    if options.aot:
-        covered += [release_artifact.ACCEPTED_DESCRIPTOR, ANDROID_DESCRIPTOR,
-                    *release_artifact.GENERATOR_INPUTS]
     for name in options.kernel:
         kernel = KERNELS[name]
         covered += [kernel["descriptor"], kernel["metadata"], *kernel["series"], *kernel["fragments"]]
@@ -1014,8 +685,6 @@ def main(argv=None):
         check_android(repo, report, staged, options.app)
     for name in options.kernel:
         check_kernel(repo, report, name, options.app)
-    if options.aot:
-        check_aot(repo, report, options.app)
     return report.finish()
 
 

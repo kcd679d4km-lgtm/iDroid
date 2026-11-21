@@ -40,7 +40,7 @@ extension AppModel {
             runningSeconds: virtualMachineRuns ? feedbackServices.runningSeconds(self) : nil,
             boot: bootingInformation(),
             freeSpaceBytes: host.freeStorageBytes,
-            thermalState: Self.thermalName(ProcessInfo.processInfo.thermalState), heatLimitOn: heatLimitOn)
+            thermalState: Self.thermalName(ProcessInfo.processInfo.thermalState))
     }
 
     /// The virtual machine is starting: the boot screen is up and Android has

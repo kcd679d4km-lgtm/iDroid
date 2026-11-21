@@ -528,7 +528,6 @@ uml_add_guest_integration_test(
 
 add_subdirectory(aarch32)
 add_subdirectory(android)
-add_subdirectory(aot)
 add_subdirectory(exclusive)
 add_subdirectory(memory_pressure)
 add_subdirectory(no_sve)
@@ -1463,26 +1462,6 @@ foreach(_code_change_engine IN ITEMS gadgets jit)
         ARGS --probe ${UML_GUEST_CODE_CHANGE} --cpus 4
             --engine ${_code_change_engine}
         LABELS guest;smp;dynamic-code;${_code_change_engine}
-        TIMEOUT 600
-        CPUS 4)
-endforeach()
-
-uml_add_freestanding_cxx_payload(UML_GUEST_FORK_FLUSH guest-fork-flush
-    smp/guest_fork_flush.cpp
-    COMMENT "Building the freestanding arm64 fork-flush guest probe"
-    ARCH_OPTIONS -march=armv8.1-a -mno-outline-atomics)
-
-# What a fork leaves of the parent's address space: the kernel invalidates on
-# the host only the writable private mappings fork write-protects, so each side
-# of a fork over every kind of memory must see only its own bytes, with a
-# sibling thread of the parent writing during the fork.
-foreach(_fork_flush_engine IN ITEMS gadgets jit)
-    uml_add_guest_integration_test(
-        NAME guest-fork-flush-${_fork_flush_engine}
-        SCRIPT smp/run_guest_fork_flush.py
-        ARGS --probe ${UML_GUEST_FORK_FLUSH} --cpus 4
-            --engine ${_fork_flush_engine}
-        LABELS guest;smp;memory;mmu;${_fork_flush_engine}
         TIMEOUT 600
         CPUS 4)
 endforeach()

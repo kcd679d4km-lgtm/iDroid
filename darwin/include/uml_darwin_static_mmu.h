@@ -38,29 +38,9 @@ struct darwin_uml_static_sequences {
 	uint64_t execution_interrupt;
 };
 
-/* Flags of a code-page stamp. */
-enum {
-	/* The mapping the stamp was asked through carries the kernel's immutable
-	 * fact. Only darwin_uml_static_vm_code_page() knows it: a stamp read by
-	 * handle leaves it clear, because a handle names the physical page, not
-	 * one of its mappings. */
-	DARWIN_UML_STATIC_STAMP_IMMUTABLE = 1,
-	/* The page's record cannot count its executable mappings exactly any
-	 * more, so no verdict about its bytes may be kept. */
-	DARWIN_UML_STATIC_STAMP_NEVER_SHARE = 2,
-};
-
-/* What one physical page says about itself. `identity` is never reused.
- * `version` moves at every publication and at every departure of a mapping.
- * `epoch` moves at a publication that names the page's frame and when the last
- * executable mapping of the page departs, and, for every page at once, at a
- * kernel write that names no frame (a target page its address space does not
- * map, or a frame Linux cannot name); nowhere else. */
 struct darwin_uml_static_code_page_stamp {
 	uint64_t identity;
 	uint64_t version;
-	uint64_t epoch;
-	uint64_t flags;
 };
 
 int darwin_uml_static_vm_map(void *address, int fd,
@@ -128,17 +108,6 @@ int darwin_uml_static_vm_translate(unsigned long generation,
 				   unsigned long address,
 				   enum darwin_uml_static_access access,
 				   void **host_address);
-/* darwin_uml_static_vm_translate() for an execute access that also names the
- * holder word of the frame it translated: an 8-byte atomic, 8-byte aligned,
- * in which a translator registers its generation before it reads the frame's
- * bytes, so that a code synchronization by another process reaches it
- * (memory/mmu/code_holders.hpp has the word's layout). It lives as long as the
- * mapping does. `*holder` is null when the frame's backing cannot make one;
- * every publication on such a backing then goes to every generation, and
- * there is nothing to register. */
-int darwin_uml_static_vm_translate_execute(unsigned long generation,
-					   unsigned long address,
-					   void **host_address, void **holder);
 /* darwin_uml_static_vm_translate() through an execution context of the same
  * generation: while the context is entered, a guest address is resolved from
  * the generation it holds; otherwise, or for a null context, this is
@@ -199,33 +168,8 @@ int darwin_uml_static_vm_execution_context_code_change_ranges(
 	struct darwin_uml_static_code_change *changes, size_t capacity,
 	uint64_t *current_sequence);
 void darwin_uml_static_vm_invalidate_code(unsigned long address);
-/* darwin_uml_static_vm_invalidate_code() for a guest's own code
- * synchronization (IC IVAU) that must say whether it found the frame: 1 when
- * the active generation maps nothing at `address`, a guest page whose page
- * table entry the walker has not installed yet. Hardware faults such an
- * instruction like a load; the caller reports that fault so the kernel maps
- * the page, and runs the instruction again. Everything else publishes as
- * darwin_uml_static_vm_invalidate_code() does and answers 0. */
-int darwin_uml_static_vm_synchronize_code(unsigned long address);
 int darwin_uml_static_vm_invalidate_code_generation(
 	unsigned long generation, unsigned long address, unsigned long length);
-/* darwin_uml_vm_invalidate_code_frame() for guest pages: Linux wrote
- * [address, address + length), within one guest page of the generation, through
- * its alias of the frame at `fd` and `offset`. The change is published at the
- * holders of that frame, whatever the generation maps at `address` now. A
- * negative `fd` names no frame. 0, or a negative value for a range or offset
- * that is invalid. */
-int darwin_uml_static_vm_invalidate_code_frame(
-	unsigned long generation, unsigned long address, unsigned long length,
-	int fd, unsigned long long offset);
-/* darwin_uml_vm_invalidate_code_frames(): Linux wrote the whole guest pages
- * [offset, offset + length) of the frame source `fd` through its own alias,
- * for no process. The change is published at the x86 holders of those frames
- * and returns at once while no x86 code may hold one; a negative `fd` names no
- * frame. 0, or a negative value for an offset or length that is not whole
- * pages. */
-int darwin_uml_static_vm_invalidate_code_frames(
-	int fd, unsigned long long offset, unsigned long long length);
 
 #if defined(DARWIN_UML_X86_64_GUEST) && DARWIN_UML_X86_64_GUEST
 /* The x86-64 guest's frame holders (darwin/memory/mmu/frame_accounting.hpp):

@@ -50,9 +50,6 @@ nonisolated struct SendFeedbackInformation: Equatable, Sendable {
     /// The free space as the application shows it.
     var freeSpaceBytes: UInt64
     var thermalState: String
-    /// Settings' "When hot": on limits the frame rate while the device is hot,
-    /// off tells Android nothing of the heat.
-    var heatLimitOn = true
 
     /// The device line's value: never empty, and never an iPhone's identifier
     /// for a Mac. What is known is said when the model is not.
@@ -90,7 +87,6 @@ nonisolated struct SendFeedbackInformation: Equatable, Sendable {
         }
         lines.append("Free space: \(Formats.size(bytes: freeSpaceBytes))")
         lines.append("Thermal state: \(thermalState)")
-        lines.append("Frame rate limit when hot: \(HeatLimitWords.state(isOn: heatLimitOn))")
         return lines.map(Self.oneLine)
     }
 

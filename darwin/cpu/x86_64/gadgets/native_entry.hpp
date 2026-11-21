@@ -49,10 +49,9 @@ struct NativeExecutionContext final {
 	/* Pages holding a cached translation in any executor of this address
 	 * space; null publishes on every executable-page store. */
 	CodePageRegistry *code_pages{};
-	/* The TLB entry the last stack instruction translated through, and at a
-	 * run's start the entry of RSP's page. A stack access re-checks this
-	 * entry's tag before hashing its address, and a plain-page tag lets it
-	 * skip the store epilogue; it is never null. */
+	/* The TLB entry the last stack access translated through. A stack access
+	 * re-checks this entry's tag before hashing its address, and a plain-page
+	 * tag lets it skip the store epilogue; it is never null. */
 	NativeTlbEntry *stack_entry{};
 	/* The stack pointer entry left the frame at, to which an exit that a
 	 * gadget takes from inside its own frame returns. */

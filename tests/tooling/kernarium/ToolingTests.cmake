@@ -35,14 +35,6 @@ uml_add_tooling_test(
     LABELS kernarium
     TIMEOUT 30)
 
-# A launch of Andarium keeps the phone silent unless the run tests haptics.
-uml_add_tooling_test(
-    NAME kernarium-ipad-automation-launch
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/tooling/kernarium/test_ipad_automation_launch.py
-    LABELS kernarium
-    TIMEOUT 30)
-
 uml_add_tooling_test(
     NAME kernarium-ipad-automation-supervisor
     COMMAND ${Python3_EXECUTABLE}

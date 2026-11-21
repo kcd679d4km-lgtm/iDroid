@@ -97,18 +97,7 @@ no tap or click follows; the guest-side contract is in
 [`Kernarium/README.md`](../Kernarium/README.md#devices-and-display). An
 application that draws controls over the display passes `touchDidBegin`, which
 the display calls after it has sent the contacts of each touch that begins on
-it; Kernarium passes none. An application that passes `accessibility`
-(`GuestDisplayAccessibility`, in its own words) makes the display one VoiceOver
-element with the application's `value`; activating it sends the guest no touch.
-With `directTouch` the display is instead a container of one child element that
-covers it and carries the words, the trait `allowsDirectInteraction` and
-`silentOnTouch`, so touches reach the guest as they do with VoiceOver off and
-VoiceOver says nothing of them; `takesFocus` moves VoiceOver's focus onto that
-child each time it turns true (as the child appears, and when nothing covers
-the display any more), and only the child does it (the trait and option on the
-view itself do not pass touches). Without `accessibility` the display is no
-element.
-Kernarium passes none.
+it; Kernarium passes none.
 
 - The display takes hardware keys and the system pointer only for an
   application that gives it a `hardwareInput` (Andarium); Kernarium gives none

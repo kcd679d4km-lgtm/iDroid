@@ -75,10 +75,7 @@ on the Simulator's account.
 
 The Info shots show Follow developer on X in a Preview built with
 `FOLLOW_X_HANDLE=example_handle` (and `FOLLOW_X_LOGO_SOURCE=local` for the real
-logo from `Config/Local/`); without it the row is absent from them. A Preview
-built with `STORE_LINK_ID=id0000000000` has the App Store notice, the card first
-on the Home and Welcome shots and its row in Info's; the store shots are taken
-without it.
+logo from `Config/Local/`); without it the row is absent from them.
 
 Light mode is captured for every screen; dark mode only for the screens flagged
 in the table, where the design adapts to it. Every Simulator command has a hard
@@ -332,9 +329,7 @@ SHOTS: list[Shot] = [
     s("session-stats-vram-high", "Guest", "session-stats", "The readout with VRAM at 93% of its budget: its bar is orange.", "-statsReadings", "10", "-statsVramMiB", "498"),
     s("session-stats-short", "Guest", "session-stats", "The readout after three CPU readings: the bars fill from the right, the older slots stay dimmed floor bars.", "-statsReadings", "3"),
     s("session-graphics-notice", "Guest", "session-graphics-notice", "The notice over the running guest that Android ran out of graphics memory."),
-    s("session-thermal-notice", "Guest", "session-thermal-notice", "The notice over the running guest that the frame rate is lowered while the device is hot: its words end in a chevron and open the alert, and Dismiss only dismisses."),
-    s("session-thermal-alert", "Guest", "session-thermal-alert", "The alert the thermal notice's words open: Turn off the frame rate limit?, what it costs and where to turn it back on, with Turn Off (red) and Cancel."),
-    s("session-thermal-off", "Guest", "session-thermal-off", "The session after Turn Off: the frame rate limit is off and no notice shows, whatever the heat."),
+    s("session-thermal-notice", "Guest", "session-thermal-notice", "The notice over the running guest that the frame rate is lowered while the device is hot."),
     s("session-network-cellular", "Guest", "session-network-cellular", "The notice over the running guest that iOS denies Andarium cellular data, with the way to Settings.", dark=True),
     s("session-network-wifi", "Guest", "session-network-wifi", "The notice over the running guest that iOS denies Andarium Wi-Fi, with the way to Settings.", dark=True),
     s("session-camera-notice", "Guest", "session-camera-notice", "The notice over the running guest that the camera is paused while other apps share the screen (iPad Split View or Slide Over).", dark=True),
@@ -353,11 +348,6 @@ SHOTS: list[Shot] = [
     s("settings-medium", "Settings", "settings-medium", "Settings as the side keys open it, at the medium detent: Apps (Install APK) and File browser at the top of the first screenful.", dark=True),
     s("settings-stats", "Settings", "settings-stats", "Settings scrolled to Stats: CPU, Memory and VRAM with bars of their share, and Frame rate.", dark=True),
     s("settings-stats-short", "Settings", "settings-stats", "Settings scrolled to Stats after three CPU readings: the bars fill from the right.", "-statsReadings", "3"),
-    s("settings-performance", "Settings", "settings-performance", "Settings' Performance section after Stats, with the limit on: When hot reads Limit frame rate, and the footnote says what the limit does.", dark=True),
-    s("settings-performance-menu", "Settings", "settings-performance-menu", "The When hot menu open: Limit frame rate (checked, Lets this device cool down) and Full frame rate (Hotter, and the battery drains faster)."),
-    s("settings-performance-off", "Settings", "settings-performance-off", "Performance with the limit off: When hot reads Full frame rate, and the footnote warns what it costs."),
-    s("settings-performance-hot", "Settings", "settings-performance-hot", "Performance while the device is held hot and the limit is on: an orange tile, a thermometer line that the frame rate is limited until it cools, and Frame rate at 30 fps."),
-    s("settings-performance-hot-off", "Settings", "settings-performance-hot-off", "Performance while the device is held hot and the limit is off: the thermometer line says the frame rate is not limited, with the warning under it."),
     system_mic("home-mic-system-prompt", "Capabilities", "home-mic-alert", "The system's own question when Microphone is turned on for the first time (the Simulator's alert).", "reset"),
     system_mic("home-mic-system-allowed", "Capabilities", "home-mic-on", "Microphone on after iOS allowed it.", "grant"),
     system_mic("home-mic-system-refused", "Capabilities", "home-capabilities", "Microphone after iOS refused it: the row is dimmed and says it is not allowed in Settings.", "revoke"),
@@ -408,14 +398,6 @@ SHOTS: list[Shot] = [
     feedback("feedback-entrance-settings", "settings-feedback", "Settings scrolled to Diagnostics: Send feedback is the first row, above Create bug report.", dark=True, wait=3.0),
     feedback("feedback-empty", "feedback", "Send feedback opened from a running session's Settings, empty: the subject and body lines, the information block folded, the card that asks for a bug report and the bar (Bug report, Screenshot, Add, Send feedback). Send is enabled: a tap with the problem or the details empty says which."),
     feedback("feedback-filled", "feedback-filled", "Send feedback from a session with a problem and details, and three attachments (bug report, screenshot, photo) with their sizes and remove buttons and the total under them; the bar shows the bug report as attached.", dark=True),
-    feedback("feedback-ask", "feedback-ask", "Send tapped with the problem and the details written, no bug report attached and the virtual machine running: the alert asks before the mail opens, with two buttons, Create bug report (the preferred one) and Send without bug report, and says that without a bug report a problem will most likely not get fixed."),
-    feedback("feedback-report", "feedback-report", "Send feedback after Create bug report from that alert: the report is attached, its row leads in (a chevron, a hairline, then its remove button) and says its size and how many files it holds, and the sheet is still open with the draft as it was; no mail composer."),
-    feedback("feedback-viewer", "feedback-viewer", "The bug report's row opened inside the sheet's own navigation (Back, no Done): the file as it goes with the mail (its name, size, file count, unpacked size and the sentence that it goes as it is), then its top level as folders and files; a folder that holds one folder is one row, a text, a picture and an archive open, and a file that is not text is dimmed, says so and opens nothing.", dark=True),
-    feedback("feedback-viewer-folder", "feedback-viewer-folder", "A folder of the bug report opened: its files, each with its size and what it is, as Files shows a folder."),
-    feedback("feedback-viewer-text", "feedback-viewer-text", "A long text of the bug report opened: one page of plain lines that scrolls on, with its name and size in the bar and the thumb on the trailing edge held, saying where it points (a percentage and the bytes of the whole)."),
-    feedback("feedback-viewer-picture", "feedback-viewer-picture", "The screenshot of the bug report opened as a picture, scaled to fit with its pixels and size under it; nothing to zoom, share or save."),
-    feedback("feedback-viewer-nested", "feedback-viewer-nested", "An archive stored inside the bug report, opened like a folder: its name, size and file count, then its files."),
-    feedback("feedback-viewer-damaged", "feedback-viewer-damaged", "A bug report that is damaged (cut short): the first page says it can't be read, and the row on the sheet says nothing of files."),
     feedback("feedback-details", "feedback-details", "Send feedback filled, with the app and device details opened in full at the end of the mail."),
     feedback("feedback-large", "feedback-large", "Send feedback with attachments over 20 MiB: the total turns orange and says some mail services refuse mail over 20 MiB; Send still works."),
     feedback("feedback-file", "feedback-file", "Send feedback with one file from Files attached, a ZIP: a document tile, its name and size, a remove button and the total under it. The bar has three buttons, Bug report, Screenshot and Add (a paperclip whose menu offers Photos and Files).", dark=True),
@@ -427,27 +409,6 @@ SHOTS: list[Shot] = [
     feedback("feedback-file-copying", "feedback-file-copying", "The card over the sheet while a file that cannot be used where it is kept (not downloaded from its cloud storage) is copied first: a progress bar and Cancel. Send and the bar are dimmed and the file's row is not there yet; the screenshot attached before stays.", dark=True),
     feedback("feedback-file-refused", "feedback-file-refused", "The alert after a folder and an empty file were chosen: two items weren't added, one line for each reason.", dark=True),
     feedback("feedback-file-refused-one", "feedback-file-refused-one", "The alert for one file that was not added: the title for one item and its reason."),
-    s("add-home-row", "Add to Home Screen", "add-home-row", "Settings as the side keys open it while Android runs and lists apps: the Apps section has the Add to Home Screen row, Shortcuts on its right.", dark=True),
-    s("add-home-page", "Add to Home Screen", "add-home-page", "The chooser: the apps Android lists with their icons, installed ones first and the ones built into Android after, each leading to the guide.", dark=True, wait=4.0),
-    s("add-home-page-search", "Add to Home Screen", "add-home-page-search", "The chooser with a short list, so that its last section is in view: the switch for Search, on, and the sentence under it that the apps stay available in Shortcuts and Siri when it is off.", dark=True, wait=4.0),
-    s("add-home-page-refreshing", "Add to Home Screen", "add-home-page-refreshing", "The chooser while Android is asked for a fresher list: the remembered list under a line that says so.", wait=4.0),
-    s("add-home-page-loading", "Add to Home Screen", "add-home-page-loading", "The chooser with no list yet and none remembered: only the note that the list is being read from Android.", wait=4.0),
-    s("add-home-page-failed", "Add to Home Screen", "add-home-page-failed", "The chooser when Android did not answer: the last list it gave, dated, with Try again.", wait=4.0),
-    s("add-home-page-failed-empty", "Add to Home Screen", "add-home-page-failed-empty", "The chooser when Android did not answer and no list is remembered: its own title, that the apps could not be read, and Try again.", wait=4.0),
-    s("add-home-page-empty", "Add to Home Screen", "add-home-page-empty", "The chooser when Android lists no app with an icon.", wait=4.0),
-    s("add-home-page-search-none", "Add to Home Screen", "add-home-page-search-none", "A search of the chooser that finds nothing: No Results for the typed words.", wait=4.0),
-    s("add-home-page-search-off", "Add to Home Screen", "add-home-page-search-off", "The chooser with the switch for Search off.", wait=4.0),
-    s("add-home-guide", "Add to Home Screen", "add-home-guide", "The guide of one app: the four steps of Apple's Shortcuts as they look, the note about what a tap on the icon does, and Apple's Shortcuts button at the foot.", dark=True, wait=4.0),
-    s("add-home-boot", "Add to Home Screen", "add-home-boot", "The boot screen while Android starts for a tap on an icon: the card with the app, when it opens and Don't open, above the steps.", dark=True),
-    s("add-home-wait-update", "Add to Home Screen", "add-home-wait-update", "Home with an unfinished update and a request waiting for the answer: the card above the update's notice.", dark=True),
-    s("add-home-wait-space", "Add to Home Screen", "add-home-wait-space", "Home with too little free space and a request waiting: the card says to free up space, then tap Start."),
-    s("add-home-pill", "Add to Home Screen", "add-home-pill", "The capsule over Android while the app is being opened.", dark=True),
-    s("add-home-banner-gone", "Add to Home Screen", "add-home-banner-gone", "The banner when the app is not in Android: no Try again."),
-    s("add-home-banner-slow", "Add to Home Screen", "add-home-banner-slow", "The banner when Android took too long: Try again and the close mark.", dark=True),
-    s("add-home-banner-recovery", "Add to Home Screen", "add-home-banner-recovery", "The banner when Android is in recovery mode."),
-    s("add-home-banner-setup", "Add to Home Screen", "add-home-banner-setup", "The banner when Android's first-run setup is not finished: it names the app and offers Try again."),
-    s("add-home-banner-tool", "Add to Home Screen", "add-home-banner-tool", "The banner when the installed Android has no tool that opens apps: a short title with the app, the text that says to update Andarium, and no Try again."),
-    s("add-home-alert-no-android", "Add to Home Screen", "add-home-alert-no-android", "An icon used when there is no virtual machine (erased, or never set up): the alert that the app is not in Android and the icon works again once it is installed in a new virtual machine."),
     feedback("feedback-file-refused-four", "feedback-file-refused-four", "The alert for four items that were not added for four different reasons: not enough space, a folder or a package, an empty file and a file that could not be read, a line each.", dark=True),
     feedback("feedback-file-apk", "feedback-file-apk", "One pick of an ordinary file and an APK: the file is attached, and the alert says that mail services reject a message that carries an APK, so the APK was not attached, and asks for a download link in the details."),
     feedback("feedback-file-apk-several", "feedback-file-apk-several", "One pick of a file and three Android packages (.apk, .apks, .xapk): the file is attached, and one alert says the packages were not attached, in the plural."),
@@ -461,7 +422,7 @@ SHOTS: list[Shot] = [
     feedback("feedback-missing-details", "feedback-missing-details", "Send tapped with the problem written and the details empty: the alert asks for what was done and what happened."),
     feedback("feedback-discard", "feedback-discard", "Cancel after something is typed or attached: Discard or Keep editing."),
     feedback("feedback-nomail", "feedback-nomail", "Send feedback where Mail cannot send (no account): the error and the way to fix it, and every control disabled."),
-    feedback("feedback-home", "feedback-home", "Send feedback opened from Home's toolbar menu, where no virtual machine runs: the no-Google-apps line is at the top, collapsed; the card says that without a bug report a problem will most likely not get fixed and gives three steps to one (start the virtual machine, make the problem happen again, open Send feedback from there with a bug report attached); the rest of the form works.", dark=True),
+    feedback("feedback-home", "feedback-home", "Send feedback opened from Home's toolbar menu, where no virtual machine runs: the no-Google-apps line is at the top, collapsed; the card says a bug report and a screenshot need the virtual machine running and gives three steps; the rest of the form works.", dark=True),
     feedback("feedback-home-answer", "feedback-home-answer", "Send feedback from Home with the no-Google-apps line opened in place: the question, That's on purpose, and the reason."),
     feedback("feedback-home-filled", "feedback-home-filled", "Feedback that is not a bug, from Home: a suggestion with a photo; Send is ready."),
     # Buy me tokens: needs a Preview built with the four TIP_ settings (see --help)

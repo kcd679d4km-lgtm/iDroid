@@ -14,29 +14,17 @@ nonisolated struct VsockConnector: AdbConnector, GuestStreamOpener {
     /// itself when this one fails.
     static let networkAttemptTimeoutMilliseconds: UInt32 = 5000
 
-    /// The runtime's connect, which takes the port and the timeout in
-    /// milliseconds; a test names a recording one.
-    var connectVsock: @Sendable (UInt32, UInt32) -> Int32 = { port, timeout in
-        kernarium_runtime_loader_connect_vsock(port, timeout)
-    }
-
-    init() {}
-
-    init(connect: @escaping @Sendable (UInt32, UInt32) -> Int32) {
-        connectVsock = connect
-    }
-
     func connect() throws -> any AdbTransport {
-        DescriptorTransport(descriptor: try open(timeout: Self.attemptTimeoutMilliseconds))
+        DescriptorTransport(descriptor: try Self.open(timeout: Self.attemptTimeoutMilliseconds))
     }
 
     /// A stream for a computer on the network; the bridge owns it.
     func openStream() throws -> Int32 {
-        try open(timeout: Self.networkAttemptTimeoutMilliseconds)
+        try Self.open(timeout: Self.networkAttemptTimeoutMilliseconds)
     }
 
-    private func open(timeout: UInt32) throws -> Int32 {
-        let result = connectVsock(Self.adbPort, timeout)
+    private static func open(timeout: UInt32) throws -> Int32 {
+        let result = kernarium_runtime_loader_connect_vsock(adbPort, timeout)
         if result >= 0 { return result }
         switch -result {
         case ECONNREFUSED: throw AdbError.refused
@@ -99,14 +87,6 @@ nonisolated struct AdbGuestShell: GuestShell {
     func run(_ command: String, limit: Duration) async throws -> GuestShellOutput {
         let result = try await operations.shell(command, limit: limit)
         return GuestShellOutput(text: result.text, exitCode: result.exitCode)
-    }
-}
-
-/// The image's `kernarium_apps` tool prints binary pictures: its answers are
-/// read as the bytes the shell sent.
-extension AdbGuestShell: GuestBinaryShell {
-    func runBinary(_ command: String, limit: Duration) async throws -> ShellResult {
-        try await operations.shell(command, limit: limit)
     }
 }
 

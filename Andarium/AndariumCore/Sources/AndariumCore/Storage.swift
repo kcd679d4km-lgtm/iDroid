@@ -158,35 +158,8 @@ public struct TwoDiskStorage: GuestStorage {
         }
     }
 
-    /// Set up writes a new record over whatever is there, so for an unsigned
-    /// proof the rules decide first whether files that exist may be replaced:
-    /// when the system is a proof, or the record says a proof created the
-    /// instance, only a decision to create (no record, or no data behind it)
-    /// lets Set up go on, and anything else is the mismatch Home words. The
-    /// guest's settings can be missing while its data and record are intact;
-    /// erasing that guest stays with the explicit Erase.
-    private func requireCreationPermitted() throws {
-        let recorded: InstanceState?
-        do {
-            recorded = try files.readState()
-        } catch {
-            // A record nobody can read is the rules' to refuse for a proof. Under
-            // a signed build, Set up with an unreadable record goes on as it
-            // always did, also when that damaged record once belonged to a proof:
-            // it cannot be trusted to say what made it, and refusing would leave
-            // a signed release's user with no way to set up again.
-            if release.isUnsignedProof { throw error }
-            return
-        }
-        guard release.isUnsignedProof || recorded?.isUnsignedProof == true else { return }
-        guard try files.decide(for: release).action == .create else {
-            throw InstanceError.refused(StartBlock.mismatch.explanation)
-        }
-    }
-
     public func create(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest {
         try requireUsablePaths()
-        try requireCreationPermitted()
         let manager = FileManager.default
         try manager.createDirectory(at: locations.directory, withIntermediateDirectories: true)
         for legacy in locations.legacyImages { try? manager.removeItem(at: legacy) }

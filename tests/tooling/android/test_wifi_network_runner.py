@@ -26,9 +26,6 @@ import inspect
 import io
 from pathlib import Path
 import re
-import select
-import socket
-import struct
 import subprocess
 import sys
 import tempfile
@@ -38,7 +35,6 @@ import types
 import unittest
 from unittest import mock
 import zipfile
-from collections.abc import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import wifi_dump_fixtures  # noqa: E402
@@ -125,11 +121,6 @@ def agent(net_id: int, capabilities: str, transport: str = "WIFI", validated_at:
             'SSID: "VirtWifi"' + (" PrivateDnsBroken" if private_dns_broken else "")
             + " UnderlyingNetworks: Null]}  factorySerialNumber=-1}\n")
 
-
-REQUEST_OUTPUT = "request t=1000.5 ping_rc=0 dns_tcp_bytes=45\n"
-WAKE_MARK = "wake-0123456789abcdef"
-SUPPLICANT_DISCONNECT = ("wlan0: CTRL-EVENT-DISCONNECTED bssid=62:eb:c4:11:6e:64 reason=3 locally_generated=1")
-PLATFORM_DISCONNECT = "[102 WIFI] disconnected, was satisfying 25"
 
 STOCK = "NOT_METERED&INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&NOT_ROAMING&FOREGROUND&NOT_CONGESTED&NOT_SUSPENDED"
 VALIDATED = STOCK.replace("NOT_VPN&", "NOT_VPN&VALIDATED&")
@@ -249,13 +240,6 @@ class StubbedGuest(ScriptedGuest):
     def __init__(self, **answers: list[str]) -> None:
         super().__init__(**answers)
         self.calls: list[str] = []
-        # What a watched suspend leaves: the request's output, what the guest's log holds after the mark, and what
-        # the platform does at the wake.
-        self.request = REQUEST_OUTPUT
-        self.after_mark = ""
-        self.on_wake = lambda: None
-        # The echo server's log: the connection that the host closed in a frozen stay ended before the request began.
-        self.echo_lines = "close A 1000.2 rc=0\n"
 
     def reevaluate(self, net_id: int) -> None:
         self.calls.append(f"reevaluate {net_id}")
@@ -278,34 +262,8 @@ class StubbedGuest(ScriptedGuest):
     def wait_joined(self, seconds: float, what: str) -> None:
         self.calls.append(f"joined {what}")
 
-    def suspend_and_wake(self, watch: bool = False, frozen: "Callable[[], None] | None" = None) -> None:
-        self.calls.append("suspend and wake" if frozen is None else "suspend and wake while frozen")
-        if frozen is not None:
-            frozen()
-        self.on_wake()
-        if watch:
-            self.wake = runner.Wake(WAKE_MARK, runner.time.monotonic(), self.request)
-
-    def log_text(self) -> str:
-        return log_line(1, 1, "I", runner.SYNC_TAG, WAKE_MARK) + self.after_mark
-
-    def echo_log(self) -> str:
-        return self.echo_lines
-
-    def has_address(self) -> bool:
-        return True
-
-    def shell(self, command: str, timeout: float = runner.COMMAND_SECONDS) -> str:
-        if command.startswith("cmd wifi set-wifi-enabled"):
-            self.calls.append(command)
-            return ""
-        return super().shell(command, timeout)
-
-    def start_echo(self) -> None:
-        self.calls.append("start echo")
-
-    def stop_echo(self) -> None:
-        self.calls.append("stop echo")
+    def suspend_and_wake(self) -> None:
+        self.calls.append("suspend and wake")
 
     def diagnose(self) -> str:
         return ""
@@ -973,28 +931,17 @@ class WarningSectionTests(unittest.TestCase):
         with self.assertRaisesRegex(runner.Failure, "shows only the warning: .*Limited connection"):
             runner.check_failed_check_warns(self.stubbed(ui=[CLEAR_SCREEN]))
 
-    def test_the_warning_after_a_wake_waits_for_the_mark_on_the_same_network(self) -> None:
-        guest = self.stubbed(ui=[CLEAR_SCREEN, WARNING_SCREEN])
-        self.assertEqual(runner.check_warning_after_wake(guest),
-                         "network 102 kept through the wake, validated at 5000 throughout, with the warning")
+    def test_the_warning_after_a_wake_waits_for_the_station_and_the_mark(self) -> None:
+        woken = "Current networks:\n" + agent(102, VALIDATED, validated_at=5000) \
+            + agent(103, VALIDATED, validated_at=9000) + "Other state\n"
+        guest = self.stubbed(connectivity=[CONNECTIVITY, woken], network_stack=[stack_of(103)],
+                             ui=[CLEAR_SCREEN, WARNING_SCREEN])
+        self.assertEqual(runner.check_warning_after_wake(guest), "network 102 became network 103")
         self.assertEqual(guest.calls[0], "suspend and wake")
 
-    def test_a_wake_that_replaces_the_network_fails_with_the_new_one_named(self) -> None:
-        woken = "Current networks:\n" + agent(103, VALIDATED, validated_at=9000) + "Other state\n"
-        guest = self.stubbed(network_stack=[stack_of(103)])
-        guest.on_wake = lambda: guest.answers.update({ScriptedGuest.COMMANDS["connectivity"]: [woken]})
-        with self.assertRaisesRegex(runner.Failure, "network 102 became network 103"):
-            runner.check_warning_after_wake(guest)
-
-    def test_a_warning_that_is_not_shown_after_the_wake_fails_the_section(self) -> None:
-        with self.assertRaisesRegex(runner.Failure,
-                                    "the failed check shows only the warning after the wake: .*Limited connection"):
-            runner.check_warning_after_wake(self.stubbed(ui=[CLEAR_SCREEN]))
-
-    def test_a_wake_that_leaves_no_network_listed_fails_the_section(self) -> None:
+    def test_a_wake_that_leaves_the_old_network_does_not_show_the_warning_of_a_new_one(self) -> None:
         guest = self.stubbed()
-        guest.on_wake = lambda: guest.answers.update({ScriptedGuest.COMMANDS["connectivity"]: ["Current networks:\n"]})
-        with self.assertRaisesRegex(runner.Failure, "network 102 is gone: ConnectivityService lists no Wi-Fi network"):
+        with self.assertRaisesRegex(runner.Failure, "the newest network is still 102, not a new one"):
             runner.check_warning_after_wake(guest)
 
     def test_a_page_answer_section_needs_a_request_at_the_server(self) -> None:
@@ -1474,30 +1421,9 @@ class QuickStopTests(unittest.TestCase):
                 mock.patch.object(runner.boot_android, "resolve_executable", return_value="adb"), \
                 mock.patch.object(runner, "fresh", lambda *a: calls.append("fresh")), \
                 mock.patch.object(runner, "quick_stop", lambda *a: calls.append("quick stop")), \
-                mock.patch.object(runner, "wake_only", lambda *a: calls.append("wake only")), \
                 mock.patch.object(runner, "upgrade", lambda *a: calls.append("upgrade")):
             self.assertEqual(runner.main(), 0)
         return calls
-
-    def test_the_wake_option_runs_the_sections_of_a_suspend_alone(self) -> None:
-        self.assertEqual(self.run_main(["--wake-only"]), ["wake only"])
-
-    def test_the_wake_option_takes_neither_of_the_other_section_options(self) -> None:
-        for other in (["--quick-stop-only"], ["--previous-release", "r22"]):
-            with self.subTest(other=other), contextlib.redirect_stderr(io.StringIO()) as errors, \
-                    mock.patch.object(sys, "argv", ["run_android_wifi_network.py", "--wake-only", *other]), \
-                    mock.patch.object(runner.boot_android, "resolve_executable", return_value="adb"):
-                self.assertEqual(runner.main(), 2)
-                self.assertIn("--wake-only runs on its own", errors.getvalue())
-
-    def test_the_forward_port_follows_the_guest_slot(self) -> None:
-        with mock.patch.dict(runner.os.environ):
-            runner.os.environ.pop("GUEST_SLOT_PORT_BASE", None)
-            self.assertEqual(runner.build_parser().parse_args([]).forward_port, runner.DEFAULT_FORWARD_PORT)
-            runner.os.environ["GUEST_SLOT_PORT_BASE"] = "21300"
-            parsed = runner.build_parser().parse_args([])
-            self.assertEqual((parsed.adb_port, parsed.forward_port), (21300, 21300 + runner.FORWARD_OFFSET))
-            self.assertEqual(runner.build_parser().parse_args(["--forward-port", "6001"]).forward_port, 6001)
 
     def test_the_cases_run_between_the_fresh_disk_and_the_upgrade(self) -> None:
         self.assertEqual(self.run_main(["--previous-release", "r22"]), ["fresh", "quick stop", "upgrade"])
@@ -1522,15 +1448,13 @@ class QuickStopTests(unittest.TestCase):
                 mock.patch.object(boot, "wait_for_adb"), \
                 mock.patch.object(boot, "wait_for_boot_completed", return_value=True), \
                 mock.patch.object(boot.android_instance, "booted", side_effect=OSError("the instance record")), \
-                mock.patch.object(runner.subprocess, "Popen", return_value=launched) as popen, \
+                mock.patch.object(runner.subprocess, "Popen", return_value=launched), \
                 mock.patch.object(runner, "stop", lambda guest: stops.append(guest)), \
                 mock.patch.object(runner, "Console", lambda *a: object()):
             with self.assertRaises(OSError):
                 runner.start_guest(options, "adb", Path(tempfile.gettempdir()), None, Path(tempfile.gettempdir()) / "i",
                                    provision=False)
         self.assertEqual(len(stops), 1)
-        # The launcher forwards a host port to the station's address, where the runner's echo server listens.
-        self.assertIn(f"--net-forward=tcp:127.0.0.1:{options.forward_port}-10.0.2.16:7001", popen.call_args[0][0])
 
 
 class ContinuityReadingTests(unittest.TestCase):
@@ -2310,7 +2234,7 @@ class CrashEvidenceTests(unittest.TestCase):
         self.assertEqual(report.failures, [])
 
     def test_the_last_section_of_each_guest_of_the_release_under_test_is_the_summary(self) -> None:
-        for function in (runner.fresh, runner.wake_only, runner.upgrade_from):
+        for function in (runner.fresh, runner.upgrade_from):
             source = inspect.getsource(function)
             last = source[source.rindex("report.section("):]
             self.assertTrue(last.startswith("report.section(CRASH_SECTION, guest, "), function.__name__)
@@ -2640,23 +2564,19 @@ class SuspendGpuLogTests(unittest.TestCase):
         def dump(self) -> str:
             return ENABLED_DUMP
 
-    @staticmethod
-    def waits_for_the_station(guest: "SuspendingGuest") -> None:
-        """A section that suspends the guest and waits for the station: where late output arrives."""
-        guest.suspend_and_wake()
-        guest.wait_joined(runner.RESUME_SECONDS, "the station is joined after the wake")
-
     def test_a_reset_that_arrives_while_the_section_waits_for_the_station_fails_the_section(self) -> None:
         guest = self.LateOutput(on_wake="PM: suspend exit\n")
         report = runner.Report()
-        report.section("a section that waits for the station", guest, lambda: self.waits_for_the_station(guest))
+        report.section("the station joins again after a suspend and wake", guest,
+                       lambda: runner.check_suspend(guest))
         self.assertEqual(len(report.failures), 1, report.failures)
         self.assertIn(f"{gpu_suspend_log.RESET_LABEL}: {HOST_RESET_LINE.strip()}", report.failures[0])
 
     def test_late_gpu_errors_fail_the_section_as_gpu_errors(self) -> None:
         guest = self.LateOutput(line=HOST_GPU_REFUSAL, on_wake="PM: suspend exit\n")
         report = runner.Report()
-        report.section("a section that waits for the station", guest, lambda: self.waits_for_the_station(guest))
+        report.section("the station joins again after a suspend and wake", guest,
+                       lambda: runner.check_suspend(guest))
         self.assertIn(f"{gpu_suspend_log.ERRORS_LABEL}: {HOST_GPU_REFUSAL.strip()}", report.failures[0])
         self.assertIn("the cause is not established", report.failures[0])
 
@@ -2680,7 +2600,7 @@ class SuspendGpuLogTests(unittest.TestCase):
         self.assertEqual(report.failures, [])
         self.assertIsNone(guest.suspend_log().mark)
         late = self.LateOutput(on_wake="PM: suspend exit\n")
-        report.section("late", late, lambda: self.waits_for_the_station(late))
+        report.section("late", late, lambda: runner.check_suspend(late))
         report.section("the next section", late, lambda: None)
         self.assertEqual(len(report.failures), 1, report.failures)
 
@@ -2960,9 +2880,9 @@ class SimulatedGuest(StubbedGuest):
         super().forget_and_save()
         self.join()
 
-    def suspend_and_wake(self, watch: bool = False, frozen: Callable[[], None] | None = None) -> None:
-        super().suspend_and_wake(watch, frozen)
-        if self.faults.get("wake_replaces_network"):
+    def suspend_and_wake(self) -> None:
+        super().suspend_and_wake()
+        if not self.faults.get("wake_keeps_network"):
             self.join()
 
     def reevaluate(self, net_id: int) -> None:
@@ -3215,23 +3135,15 @@ class SimulatedSectionTests(unittest.TestCase):
     def test_the_failed_check_of_a_black_hole_shows_only_the_warning(self) -> None:
         self.assertIn("validated, joined and enabled", runner.check_failed_check_warns(self.guest()))
 
-    def test_a_wake_keeps_the_network_and_the_warning_stays_on_it(self) -> None:
+    def test_a_wake_shows_the_warning_of_a_new_network(self) -> None:
         guest = self.guest()
         runner.check_failed_check_warns(guest)
-        self.assertRegex(runner.check_warning_after_wake(guest),
-                         r"^network 102 kept through the wake, validated at \d+ throughout, with the warning$")
-        self.assertEqual(guest.net_id, 102)
+        self.assertEqual(runner.check_warning_after_wake(guest), "network 102 became network 103")
 
-    def test_a_wake_that_joins_a_new_network_fails_the_section(self) -> None:
-        guest = self.guest(wake_replaces_network=True)
+    def test_a_wake_that_keeps_the_network_fails_the_section(self) -> None:
+        guest = self.guest(wake_keeps_network=True)
         runner.check_failed_check_warns(guest)
-        self.fails(runner.check_warning_after_wake, guest, "network 102 became network 103")
-
-    def test_a_disconnect_in_the_window_fails_the_section_although_the_network_is_kept(self) -> None:
-        guest = self.guest()
-        guest.after_mark = log_line(864, 864, "I", "wpa_supplicant", SUPPLICANT_DISCONNECT)
-        runner.check_failed_check_warns(guest)
-        self.fails(runner.check_warning_after_wake, guest, "the supplicant reported a disconnect")
+        self.fails(runner.check_warning_after_wake, guest, "the newest network is still 102, not a new one")
 
     # Strict private DNS.
     def test_a_check_that_fails_again_and_again_does_not_probe_a_strict_private_dns_name_again(self) -> None:
@@ -3470,738 +3382,6 @@ class RunnerNamesTests(unittest.TestCase):
     def test_the_words_are_androids_own(self) -> None:
         # WifiTrackerLib's wifitrackerlib_wifi_limited_connection and SystemUI's "No internet" description.
         self.assertEqual((runner.LIMITED_CONNECTION, runner.NO_INTERNET), ("Limited connection", "No internet"))
-
-
-# ---- A suspend keeps the station.
-
-def wpa_line(message: str, when: str = "03:10:01.000") -> str:
-    return log_line(864, 864, "I", "wpa_supplicant", message, when)
-
-
-class StationReadingTests(unittest.TestCase):
-    """What the runner reads of a stay: the log after the mark, the platform's list, the guest's request and the echo
-    server's log."""
-
-    MARK = log_line(2270, 2270, "I", runner.SYNC_TAG, WAKE_MARK, "03:10:00.000")
-
-    def test_a_log_without_a_disconnect_after_the_mark_has_no_problem(self) -> None:
-        log = self.MARK + wpa_line("wlan0: CTRL-EVENT-CONNECTED - Connection to 62:eb completed")
-        self.assertEqual(runner.disconnect_problems(log, WAKE_MARK), [])
-
-    def test_the_supplicants_disconnect_after_the_mark_is_a_problem(self) -> None:
-        log = self.MARK + wpa_line(SUPPLICANT_DISCONNECT, "03:10:16.013")
-        found = runner.disconnect_problems(log, WAKE_MARK)
-        self.assertEqual(len(found), 1, found)
-        self.assertIn("the supplicant reported a disconnect", found[0])
-        self.assertIn("reason=3 locally_generated=1", found[0])
-
-    def test_the_platforms_disconnect_of_the_network_after_the_mark_is_a_problem(self) -> None:
-        log = self.MARK + log_line(618, 808, "D", "ConnectivityService", PLATFORM_DISCONNECT, "03:10:16.050")
-        found = runner.disconnect_problems(log, WAKE_MARK)
-        self.assertEqual(len(found), 1, found)
-        self.assertIn("ConnectivityService disconnected a network", found[0])
-
-    def test_a_disconnect_before_the_mark_is_not_the_stays(self) -> None:
-        log = wpa_line(SUPPLICANT_DISCONNECT, "03:09:00.000") + self.MARK
-        self.assertEqual(runner.disconnect_problems(log, WAKE_MARK), [])
-
-    def test_the_same_words_from_another_process_are_no_report(self) -> None:
-        log = self.MARK + log_line(
-            593, 593, "W", "MagnificationConnectionManager",
-            "requestConnection duplicated request: connect=false, mConnectionState=DISCONNECTED")
-        log += log_line(593, 775, "D", "ConnectivityService", "[100 CELLULAR] disconnected, was satisfying 25")
-        log += log_line(864, 864, "I", "other", "wlan0: CTRL-EVENT-DISCONNECTED")
-        self.assertEqual(runner.disconnect_problems(log, WAKE_MARK), [])
-
-    def test_a_log_that_no_longer_holds_the_mark_cannot_be_read(self) -> None:
-        found = runner.disconnect_problems(wpa_line("wlan0: CTRL-EVENT-CONNECTED"), WAKE_MARK)
-        self.assertEqual(len(found), 1)
-        self.assertIn("no longer holds the line logged before the suspend", found[0])
-
-    def test_the_network_after_a_wake_must_be_the_one_before(self) -> None:
-        networks = runner.wifi_networks(CONNECTIVITY)
-        self.assertEqual(runner.kept_network_problems(networks, 102), [])
-        self.assertEqual(runner.kept_network_problems(networks, 101), ["network 101 became network 102"])
-        self.assertEqual(runner.kept_network_problems({}, 102),
-                         ["network 102 is gone: ConnectivityService lists no Wi-Fi network"])
-
-    def test_the_request_after_the_wake_needs_the_gateway_and_the_name_server(self) -> None:
-        self.assertEqual(runner.request_problems(REQUEST_OUTPUT), [])
-        failed = runner.request_problems("request t=1000.5 ping_rc=2 dns_tcp_bytes=0\n")
-        self.assertEqual(len(failed), 2, failed)
-        self.assertIn("the gateway did not answer a ping 1 s after the wake (status 2)", failed[0])
-        self.assertIn("the name server did not answer a query over TCP 1 s after the wake (0 bytes)", failed[1])
-        self.assertEqual(len(runner.request_problems("request t=1000.5 ping_rc=0 dns_tcp_bytes=13\n")), 1)
-        self.assertIn("printed no answer", runner.request_problems("sh: nc: not found\n")[0])
-        self.assertIn("printed no answer", runner.request_problems("")[0])
-
-    def test_the_request_goes_through_the_default_network_to_the_launchers_servers(self) -> None:
-        self.assertIn("ping -c 1 -W 2 10.0.2.2", runner.WAKE_REQUEST)
-        self.assertIn("nc -w 3 10.0.2.3 53 2>/dev/null | wc -c", runner.WAKE_REQUEST)
-        # The query is a DNS question for localhost over TCP: its length, the header, the name.
-        query = bytes(int(octal, 8) for octal in runner.DNS_QUERY_OCTAL.split("\\")[1:])
-        self.assertEqual(int.from_bytes(query[:2], "big"), len(query) - 2)
-        self.assertEqual(query[14:24], b"\tlocalhost")
-
-    def test_the_time_of_the_request_is_the_guests_clock_at_its_start(self) -> None:
-        self.assertEqual(runner.request_time(REQUEST_OUTPUT), 1000.5)
-        self.assertIsNone(runner.request_time("sh: nc: not found\n"))
-
-    def test_the_end_of_a_connection_is_the_guests_clock_in_the_echo_servers_log(self) -> None:
-        log = "open A 999.1\nopen B 999.2\nclose A 1000.25 rc=1\n"
-        self.assertEqual(runner.closed_at(log, "A"), 1000.25)
-        self.assertIsNone(runner.closed_at(log, "B"))
-        self.assertIsNone(runner.closed_at("", "A"))
-
-    def test_a_connect_that_took_the_stay_is_told_from_one_that_took_the_delay(self) -> None:
-        start = wpa_line("wlan0: Trying to associate with 62:eb:c4:11:6e:64 (SSID='VirtWifi' freq=5240 MHz)", "03:10:05.000")
-        held = self.MARK + start + wpa_line("wlan0: CTRL-EVENT-CONNECTED - Connection to 62:eb completed", "03:11:09.200")
-        quick = self.MARK + start + wpa_line("wlan0: CTRL-EVENT-CONNECTED - Connection to 62:eb completed", "03:10:07.070")
-        self.assertAlmostEqual(runner.connect_took(held, WAKE_MARK), 64.2, places=3)
-        self.assertAlmostEqual(runner.connect_took(quick, WAKE_MARK), 2.07, places=3)
-        self.assertIsNone(runner.connect_took(self.MARK + start, WAKE_MARK))
-        self.assertIsNone(runner.connect_took(start, WAKE_MARK))
-        # A connection that was reported before the connect began is not the connect.
-        early = self.MARK + wpa_line("wlan0: CTRL-EVENT-CONNECTED - Connection to 62:eb completed", "03:10:01.000") + start
-        self.assertIsNone(runner.connect_took(early, WAKE_MARK))
-
-    def test_a_kernel_warning_and_a_call_trace_in_the_console_are_problems(self) -> None:
-        console = ("[  134.17][   T9] PM: suspend entry (deep)\n"
-                   "[  139.25][   T9] WARNING: CPU: 0 PID: 9 at net/wireless/sme.c:845 __cfg80211_connect_result+0x1c\n"
-                   "[  139.26][   T9] Call Trace:\n"
-                   "[  139.27][   T9] PM: suspend exit\n")
-        found = runner.console_problems(console)
-        self.assertEqual(len(found), 2, found)
-        self.assertIn("WARNING: CPU: 0", found[0])
-        self.assertIn("Call Trace:", found[1])
-        self.assertEqual(runner.console_problems("[  1.0][ T1] PM: suspend entry (deep)\n[  2.0][ T1] PM: suspend exit\n"), [])
-
-
-class LoopbackGuest:
-    """A TCP echo server on the loopback that stands for the echo server of the guest: it echoes each line, and
-    `ends_after` lines it has echoed (or on the line `ends_on`, which it does not echo) it ends the connection (a
-    guest whose connection is dead).
-
-    The end is a shutdown of its sending side; it then reads and drops what the host still writes until the host
-    closes. A close would not do: a close with a line of the host unread, or a line of the host that reaches a closed
-    socket, is answered with a reset, and whether the host reads the end or the reset first is the kernel's timing,
-    which a slow scheduler changes. `resets` ends the connection with that reset on purpose. `end_with_line_pending`
-    holds the end until a line of the host has reached the guest (`line_pending` records whether it did, or the wait
-    ran out first), and `ended` is set once the guest has made its end: they put the end and the host's next line in
-    either order, for the rows that force it."""
-
-    def __init__(self, ends_after: int | None = None, ends_on: str | None = None, resets: bool = False,
-                 end_with_line_pending: bool = False) -> None:
-        self.listener = socket.socket()
-        self.listener.bind(("127.0.0.1", 0))
-        self.listener.listen()
-        self.port = self.listener.getsockname()[1]
-        self.ends_after, self.ends_on = ends_after, ends_on
-        self.resets, self.end_with_line_pending = resets, end_with_line_pending
-        self.seen: list[str] = []
-        self.closed = threading.Event()
-        self.ended = threading.Event()
-        self.line_pending: bool | None = None
-        threading.Thread(target=self.accept, daemon=True).start()
-
-    def accept(self) -> None:
-        while True:
-            try:
-                connection, _ = self.listener.accept()
-            except OSError:
-                return
-            threading.Thread(target=self.serve, args=(connection,), daemon=True).start()
-
-    def serve(self, connection: socket.socket) -> None:
-        echoed = 0
-        buffer = b""
-        with connection:
-            while True:
-                try:
-                    chunk = connection.recv(4096)
-                except OSError:
-                    return
-                if not chunk:
-                    self.closed.set()
-                    return
-                buffer += chunk
-                while b"\n" in buffer:
-                    line, _, buffer = buffer.partition(b"\n")
-                    text = line.decode()
-                    self.seen.append(text)
-                    if text == self.ends_on:
-                        self.end(connection)
-                        return
-                    connection.sendall(line + b"\n")
-                    echoed += 1
-                    if self.ends_after is not None and echoed >= self.ends_after:
-                        self.end(connection)
-                        return
-
-    def end(self, connection: socket.socket) -> None:
-        if self.end_with_line_pending:
-            self.line_pending = bool(select.select([connection], [], [], 5)[0])
-        if self.resets:
-            connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
-            connection.close()
-            self.ended.set()
-            return
-        connection.shutdown(socket.SHUT_WR)
-        self.ended.set()
-        while True:
-            try:
-                if not connection.recv(4096):
-                    return
-            except OSError:
-                return
-
-    def close(self) -> None:
-        self.listener.close()
-
-
-class LateReader(runner.Echo):
-    """A host whose thread the scheduler holds between its write and its read: `pause` seconds pass after a line
-    it writes."""
-
-    pause = 0.0
-
-    def send(self, text: str) -> None:
-        super().send(text)
-        time.sleep(self.pause)
-
-
-class EchoConnectionTests(unittest.TestCase):
-    """The host's connections into the guest's Wi-Fi address, against an echo server on the loopback."""
-
-    def setUp(self) -> None:
-        self.server = LoopbackGuest()
-        self.addCleanup(self.server.close)
-        self.connections: list[runner.Echo] = []
-
-    def connect(self, name: str = "S", kind: type[runner.Echo] = runner.Echo) -> runner.Echo:
-        connection = kind(self.server.port, name)
-        self.connections.append(connection)
-        self.addCleanup(connection.close)
-        return connection
-
-    def test_a_line_that_the_guest_echoes_passes(self) -> None:
-        self.assertIsNone(self.connect().exchange("hello"))
-
-    def test_expect_passes_over_the_lines_before_the_one_it_waits_for(self) -> None:
-        connection = self.connect()
-        connection.send("first")
-        connection.send("second")
-        self.assertIsNone(connection.expect("second", 5))
-
-    def test_a_line_that_never_comes_is_what_the_failure_says(self) -> None:
-        connection = self.connect()
-        found = connection.expect("never", 1)
-        self.assertIsNotNone(found)
-        self.assertIn("no 'never' in 1 s", found)
-
-    def test_a_connection_that_the_guest_ended_is_what_the_failure_says(self) -> None:
-        self.server.ends_after = 1
-        connection = self.connect()
-        self.assertIsNone(connection.exchange("one"))
-        self.assertEqual(connection.exchange("two", 5), "the guest ended the connection")
-
-    def test_the_end_is_read_when_the_hosts_next_line_reached_the_guest_before_the_end(self) -> None:
-        # A guest thread that the scheduler held after its last echo: the line is unread when the end comes.
-        self.server.ends_after = 1
-        self.server.end_with_line_pending = True
-        connection = self.connect()
-        self.assertIsNone(connection.exchange("one"))
-        self.assertEqual(connection.exchange("two", 5), "the guest ended the connection")
-        self.assertTrue(self.server.line_pending, "the guest ended before the host's line reached it: "
-                                                  "the ordering that the row forces did not happen")
-
-    def test_the_end_is_read_when_the_host_reads_long_after_it_wrote_to_the_ended_connection(self) -> None:
-        # A host thread that the scheduler held between its write and its read: whatever the guest's socket
-        # answered the line with has arrived by the time the host reads.
-        self.server.ends_after = 1
-        connection = self.connect(kind=LateReader)
-        self.assertIsNone(connection.exchange("one"))
-        self.assertTrue(self.server.ended.wait(5))
-        connection.pause = 0.2
-        self.assertEqual(connection.exchange("two", 5), "the guest ended the connection")
-
-    def test_a_connection_that_the_guest_reset_is_what_the_failure_says(self) -> None:
-        self.server.ends_on = "two"
-        self.server.resets = True
-        connection = self.connect()
-        self.assertIsNone(connection.exchange("one"))
-        found = connection.exchange("two", 5)
-        self.assertTrue(found.startswith("the connection broke ("), found)
-
-    def test_the_host_closing_its_end_reaches_the_server(self) -> None:
-        connection = self.connect()
-        self.assertIsNone(connection.exchange("hello"))
-        connection.close()
-        self.assertTrue(self.server.closed.wait(5))
-
-
-class EchoServerTests(unittest.TestCase):
-    def setUp(self) -> None:
-        patch = mock.patch.object(runner, "time", FakeClock())
-        patch.start()
-        self.addCleanup(patch.stop)
-        self.server = LoopbackGuest()
-        self.addCleanup(self.server.close)
-        self.calls: list[str] = []
-        self.guest = types.SimpleNamespace(
-            forward_port=self.server.port, start_echo=lambda: self.calls.append("start"),
-            stop_echo=lambda: self.calls.append("stop"))
-
-    def test_the_guests_server_is_started_before_a_connection_and_stopped_after_them_all(self) -> None:
-        with runner.EchoServer(self.guest) as echo:
-            first = echo.open("A")
-            second = echo.open("B")
-            self.assertEqual(self.calls, ["start"])
-            self.assertIsNone(first.exchange("a"))
-            self.assertIsNone(second.exchange("b"))
-        self.assertEqual(self.calls, ["start", "stop"])
-        self.assertIsNone(self.server.seen and None)
-        self.assertEqual(self.server.seen[:2], ["A", "B"])
-
-    def test_a_section_that_fails_still_stops_the_server_and_closes_the_connections(self) -> None:
-        with self.assertRaisesRegex(runner.Failure, "boom"):
-            with runner.EchoServer(self.guest) as echo:
-                connection = echo.open("A")
-                raise runner.Failure("boom")
-        self.assertEqual(self.calls, ["start", "stop"])
-        with self.assertRaises(OSError):
-            connection.sock.sendall(b"x\n")
-            connection.sock.sendall(b"x\n")
-
-    def test_a_server_that_does_not_answer_fails_with_the_forward_it_tried(self) -> None:
-        free = socket.socket()
-        free.bind(("127.0.0.1", 0))
-        port = free.getsockname()[1]
-        free.close()
-        self.guest.forward_port = port
-        with runner.EchoServer(self.guest) as echo:
-            with self.assertRaisesRegex(runner.Failure, rf"does not answer at 10\.0\.2\.16:7001 .*host port {port}"):
-                echo.open("A")
-
-    def test_a_connection_that_is_accepted_but_not_echoed_is_tried_again(self) -> None:
-        self.server.ends_on = "A"
-        with runner.EchoServer(self.guest) as echo:
-            with self.assertRaisesRegex(runner.Failure, "does not answer"):
-                echo.open("A")
-        self.assertGreaterEqual(self.server.seen.count("A"), runner.ECHO_ATTEMPTS)
-
-
-class WatchedGuest(SuspendingGuest):
-    """A guest that suspends through the real methods, with an order of events and the clock of each."""
-
-    def __init__(self, **arguments: object) -> None:
-        super().__init__(drops=False, **arguments)
-        self.order: list[tuple[str, float]] = []
-        self.process = types.SimpleNamespace(pid=4242, poll=lambda: None)
-        self.adb, self.serial = "adb", "127.0.0.1:1"
-        console = self.console
-
-        def request(command: str, seconds: float = 0) -> str:
-            self.note(command)
-            return console.request(command, seconds)
-
-        self.console = types.SimpleNamespace(request=request)
-
-    def note(self, event: str) -> None:
-        self.order.append((event, runner.time.monotonic()))
-
-    def names(self) -> list[str]:
-        return [event for event, _ in self.order]
-
-    def shell(self, command: str, timeout: float = runner.COMMAND_SECONDS) -> str:
-        if command == runner.WAKE_REQUEST:
-            self.note("request")
-            return REQUEST_OUTPUT
-        if command.startswith(f"log -t {runner.SYNC_TAG} wake-"):
-            self.note("mark")
-        return super().shell(command, timeout)
-
-    def prepare_suspend(self) -> None:
-        self.note("prepare")
-        super().prepare_suspend()
-
-
-class WatchedSuspendTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.clock = FakeClock()
-        patch = mock.patch.object(runner, "time", self.clock)
-        patch.start()
-        self.addCleanup(patch.stop)
-        output = contextlib.redirect_stdout(io.StringIO())
-        output.__enter__()
-        self.addCleanup(output.__exit__, None, None, None)
-        self.signals: list[tuple[int, int, float]] = []
-        kill = mock.patch.object(runner.os, "kill", lambda pid, number: self.signals.append((pid, number, self.clock.now)))
-        kill.start()
-        self.addCleanup(kill.stop)
-
-    def when(self, guest: WatchedGuest, event: str) -> float:
-        return next(at for name, at in guest.order if name == event)
-
-    def test_a_watched_suspend_marks_the_log_first_and_asks_a_second_after_the_wake(self) -> None:
-        guest = WatchedGuest(on_wake="PM: suspend exit\n")
-        guest.suspend_and_wake(watch=True)
-        self.assertEqual(guest.names(), ["prepare", "mark", "suspend", "wake", "request"])
-        self.assertGreaterEqual(self.when(guest, "request") - self.when(guest, "wake"), runner.WAKE_REQUEST_SECONDS)
-        self.assertEqual(self.when(guest, "wake") - self.when(guest, "suspend"), runner.SUSPEND_STAY_SECONDS)
-        self.assertEqual(guest.wake.request, REQUEST_OUTPUT)
-        self.assertEqual(guest.wake.at, self.when(guest, "wake"))
-        self.assertTrue(guest.wake.mark.startswith("wake-"))
-        self.assertEqual(self.signals, [])
-
-    def test_a_suspend_that_is_not_watched_asks_nothing_and_records_no_wake(self) -> None:
-        guest = WatchedGuest(on_wake="PM: suspend exit\n")
-        guest.suspend_and_wake()
-        self.assertEqual(guest.names(), ["prepare", "suspend", "wake"])
-        self.assertIsNone(guest.wake)
-
-    def test_a_request_that_cannot_run_is_what_the_wake_records(self) -> None:
-        guest = WatchedGuest(on_wake="PM: suspend exit\n")
-        guest.shell = lambda command, timeout=0: (_ for _ in ()).throw(runner.Failure("adb: device offline"))
-        self.assertIn("the request did not run: adb: device offline", guest.wake_request())
-
-    def test_a_stay_with_the_emulator_stopped_runs_the_hosts_acts_in_it_and_continues_it(self) -> None:
-        guest = WatchedGuest(on_wake="PM: suspend exit\n")
-        guest.suspend_and_wake(frozen=lambda: guest.note("during"))
-        stopped, continued = self.signals
-        self.assertEqual((stopped[:2], continued[:2]), ((4242, runner.signal.SIGSTOP), (4242, runner.signal.SIGCONT)))
-        self.assertEqual(continued[2] - stopped[2], runner.FROZEN_STAY_SECONDS)
-        self.assertEqual(self.when(guest, "during") - stopped[2], runner.FROZEN_FIRST_SECONDS)
-        self.assertEqual(guest.names(), ["prepare", "suspend", "during", "wake"])
-        self.assertLessEqual(self.when(guest, "wake"), continued[2])
-
-    def test_the_stay_with_the_emulator_stopped_is_as_long_as_it_is_asked_to_be(self) -> None:
-        guest = WatchedGuest(on_wake="PM: suspend exit\n")
-        guest.suspend_and_wake(frozen=lambda: None, stay=60)
-        stopped, continued = self.signals
-        self.assertEqual(continued[2] - stopped[2], 60)
-
-    def test_the_stay_longer_than_the_guests_own_alarm_is_the_default_of_a_stopped_emulator(self) -> None:
-        self.assertGreater(runner.FROZEN_STAY_SECONDS, 30)
-        self.assertLess(runner.SUSPEND_STAY_SECONDS, 15)
-
-    def test_the_emulator_is_continued_when_the_hosts_act_fails(self) -> None:
-        guest = WatchedGuest(on_wake="PM: suspend exit\n")
-
-        def during() -> None:
-            raise OSError("the connection broke")
-
-        with self.assertRaisesRegex(OSError, "the connection broke"):
-            guest.suspend_and_wake(frozen=during)
-        self.assertEqual([signal for _, signal, _ in self.signals], [runner.signal.SIGSTOP, runner.signal.SIGCONT])
-        self.assertNotIn("wake", guest.names())
-
-    def test_the_emulator_is_continued_when_the_suspend_ends_in_the_stay(self) -> None:
-        guest = WatchedGuest(on_wake="PM: suspend exit\n")
-        guest.stay_frozen = lambda during, seconds: (guest.freeze(), (_ for _ in ()).throw(KeyboardInterrupt()))
-        guest.thaw()
-        self.assertEqual(self.signals, [])
-        with self.assertRaises(KeyboardInterrupt):
-            guest.suspend_and_wake(frozen=lambda: None)
-        # The suspend's own failure path does not continue it: stop() does.
-        self.assertEqual([signal for _, signal, _ in self.signals], [runner.signal.SIGSTOP])
-        with mock.patch.object(runner.boot_android, "disconnect_adb"), \
-                mock.patch.object(runner.boot_android, "stop_guest"):
-            runner.stop(guest)
-        self.assertEqual([signal for _, signal, _ in self.signals], [runner.signal.SIGSTOP, runner.signal.SIGCONT])
-
-    def test_a_guest_that_was_never_stopped_is_not_signalled(self) -> None:
-        guest = WatchedGuest()
-        guest.thaw()
-        with mock.patch.object(runner.boot_android, "disconnect_adb"), \
-                mock.patch.object(runner.boot_android, "stop_guest"):
-            runner.stop(guest)
-        self.assertEqual(self.signals, [])
-
-    def test_a_process_that_is_gone_is_nothing_to_continue_and_nothing_to_stop(self) -> None:
-        guest = WatchedGuest()
-        with mock.patch.object(runner.os, "kill", side_effect=ProcessLookupError):
-            with self.assertRaisesRegex(runner.Failure, "the emulator is gone"):
-                guest.freeze()
-            guest.thaw()
-
-    def test_a_suspend_that_is_prepared_does_not_confirm_the_log_stream_again(self) -> None:
-        guest = WatchedGuest(on_wake="PM: suspend exit\n")
-        guest.prepare_suspend()
-        guest.suspend_and_wake(prepared=True)
-        self.assertEqual(guest.streams[0].text().count("sync-"), 1)
-        again = WatchedGuest(on_wake="PM: suspend exit\n")
-        again.suspend_and_wake()
-        self.assertEqual(again.streams[0].text().count("sync-"), 1)
-        self.assertEqual(again.names().count("prepare"), 1)
-        self.assertEqual(guest.names().count("prepare"), 1)
-
-
-class StayRowTests(unittest.TestCase):
-    """The rows that judge a stay, against a guest that answers from a script and an echo server on the loopback."""
-
-    def setUp(self) -> None:
-        self.clock = FakeClock()
-        patch = mock.patch.object(runner, "time", self.clock)
-        patch.start()
-        self.addCleanup(patch.stop)
-        output = contextlib.redirect_stdout(io.StringIO())
-        output.__enter__()
-        self.addCleanup(output.__exit__, None, None, None)
-        self.echo = LoopbackGuest()
-        self.addCleanup(self.echo.close)
-
-    def guest(self, **answers: list[str]) -> StubbedGuest:
-        base = {"connectivity": [CONNECTIVITY], "status": [JOINED], "dump": [ENABLED_DUMP]}
-        base.update(answers)
-        guest = StubbedGuest(**base)
-        guest.forward_port = self.echo.port
-        return guest
-
-    def fails(self, guest: StubbedGuest, pattern: str, **arguments: object) -> str:
-        with self.assertRaisesRegex(runner.Failure, pattern) as raised:
-            runner.keeps_station_through_stay(guest, **arguments)
-        return str(raised.exception)
-
-    def test_a_station_that_a_suspend_keeps_passes(self) -> None:
-        guest = self.guest()
-        self.assertEqual(runner.keeps_station_through_stay(guest),
-                         "network 102 kept, no disconnect, the request answered, 1 connection carrying data")
-        self.assertEqual(guest.calls, ["start echo", "suspend and wake", "stop echo"])
-        self.assertEqual(self.echo.seen, ["S", "S-after-wake"])
-
-    def test_the_stay_with_the_emulator_stopped_closes_one_connection_and_writes_to_another(self) -> None:
-        guest = self.guest()
-        self.assertEqual(runner.keeps_station_through_stay(guest, frozen=True),
-                         "network 102 kept, no disconnect, the request answered, 3 connections carrying data")
-        self.assertEqual(guest.calls, ["start echo", "suspend and wake while frozen", "stop echo"])
-        self.assertEqual(self.echo.seen.count("C-during-stay"), 1)
-        self.assertTrue(self.echo.closed.wait(5))
-        self.assertIn("B-after-wake", self.echo.seen)
-        self.assertIn("C-after-wake", self.echo.seen)
-        self.assertNotIn("A-after-wake", self.echo.seen)
-
-    def test_a_request_that_fails_after_the_wake_fails_the_row(self) -> None:
-        guest = self.guest()
-        guest.request = "request t=1000.5 ping_rc=2 dns_tcp_bytes=0\n"
-        self.fails(guest, "the gateway did not answer a ping 1 s after the wake.*the name server did not answer")
-
-    def test_a_station_that_is_not_joined_a_second_after_the_wake_fails_the_row(self) -> None:
-        self.fails(self.guest(status=[NOT_JOINED]), "the station is not joined 1 s after the wake")
-
-    def test_a_connection_that_is_dead_after_the_wake_fails_the_row(self) -> None:
-        self.echo.ends_after = 1
-        self.fails(self.guest(), "the open connection S carries no data after the wake: "
-                                 "the guest ended the connection")
-
-    def test_a_network_that_the_wake_replaced_fails_the_row_naming_both(self) -> None:
-        guest = self.guest()
-        woken = "Current networks:\n" + agent(103, VALIDATED, validated_at=9000) + "Other state\n"
-        guest.on_wake = lambda: guest.answers.update({ScriptedGuest.COMMANDS["connectivity"]: [woken]})
-        self.fails(guest, "network 102 became network 103")
-
-    def test_a_disconnect_in_the_window_fails_the_row_with_the_line(self) -> None:
-        guest = self.guest()
-        guest.after_mark = (wpa_line(SUPPLICANT_DISCONNECT, "03:10:16.013")
-                            + log_line(618, 808, "D", "ConnectivityService", PLATFORM_DISCONNECT, "03:10:16.050"))
-        message = self.fails(guest, "the supplicant reported a disconnect")
-        self.assertIn("ConnectivityService disconnected a network", message)
-
-    def test_the_window_is_read_ten_seconds_after_the_wake(self) -> None:
-        guest = self.guest()
-        runner.keeps_station_through_stay(guest)
-        self.assertGreaterEqual(self.clock.now, guest.wake.at + runner.WAKE_WINDOW_SECONDS)
-
-    def test_a_saved_network_that_is_disabled_after_the_wake_fails_the_row(self) -> None:
-        self.fails(self.guest(dump=[DISABLED_DUMP]), "the saved network is NETWORK_SELECTION_PERMANENTLY_DISABLED after the wake")
-
-    def test_every_problem_is_reported_and_the_server_is_stopped(self) -> None:
-        guest = self.guest(status=[NOT_JOINED])
-        guest.request = "request t=1000.5 ping_rc=2 dns_tcp_bytes=0\n"
-        message = self.fails(guest, "the station is not joined")
-        self.assertIn("the gateway did not answer", message)
-        self.assertEqual(guest.calls[-1], "stop echo")
-
-    def test_a_connection_that_the_host_closed_must_have_ended_for_the_guest_by_the_request(self) -> None:
-        for lines in ("", "open A 999.0\n", "close A 1002.0 rc=0\n"):
-            with self.subTest(lines=lines):
-                guest = self.guest()
-                guest.echo_lines = lines
-                self.fails(guest, "the connection that the host closed during the stay was not ended for the guest "
-                                  r"within 1 s of the wake", frozen=True)
-
-    def test_a_line_that_the_host_wrote_in_the_stay_must_arrive(self) -> None:
-        self.echo.ends_on = "C-during-stay"
-        self.fails(self.guest(), "the line the host sent during the stay did not arrive: "
-                                 "the guest ended the connection", frozen=True)
-
-    def test_an_idle_connection_that_carries_nothing_after_the_stay_fails_the_row(self) -> None:
-        self.echo.ends_on = "B-after-wake"
-        self.fails(self.guest(), "the open connection B carries no data after the wake", frozen=True)
-
-    def test_no_network_listed_before_the_suspend_is_no_row(self) -> None:
-        with self.assertRaisesRegex(runner.Failure, "lists no Wi-Fi network before the suspend"):
-            runner.keeps_station_through_stay(self.guest(connectivity=["Current networks:\n"]))
-
-    def toggled(self, **answers: list[str]) -> StubbedGuest:
-        newer = "Current networks:\n" + agent(103, VALIDATED, validated_at=9000) + "Other state\n"
-        return self.guest(**{"connectivity": [CONNECTIVITY, newer], "status": [OFF, JOINED], **answers})
-
-    def test_wifi_turned_off_and_on_joins_a_new_network_that_the_suspend_keeps(self) -> None:
-        guest = self.toggled()
-        self.assertEqual(runner.check_suspend_after_wifi_toggle(guest),
-                         "network 103 kept, no disconnect, the request answered, 1 connection carrying data")
-        self.assertEqual(guest.calls[:2], ["cmd wifi set-wifi-enabled disabled", "cmd wifi set-wifi-enabled enabled"])
-        self.assertIn("joined the station joins after Wi-Fi was turned on", guest.calls)
-        self.assertGreaterEqual(self.clock.now, runner.TOGGLE_SETTLE_SECONDS)
-
-    def test_wifi_that_comes_back_as_the_same_network_proves_nothing_and_fails(self) -> None:
-        guest = self.guest(status=[OFF, JOINED])
-        with self.assertRaisesRegex(runner.Failure, "the station joins a new network: no new network is listed"):
-            runner.check_suspend_after_wifi_toggle(guest)
-
-
-class ConnectDelayGuest(StubbedGuest):
-    """A guest for the suspend inside the connect delay: its log holds the supplicant's lines of each attempt, and what
-    each attempt left of the station."""
-
-    START = "wlan0: Trying to associate with 62:eb:c4:11:6e:64 (SSID='VirtWifi' freq=5240 MHz)"
-    DONE = "wlan0: CTRL-EVENT-CONNECTED - Connection to 62:eb:c4:11:6e:64 completed"
-
-    def __init__(self, tooks: list[float | None], console: str = "", **answers: list[str]) -> None:
-        super().__init__(status=[OFF, JOINED], **answers)
-        self.tooks = list(tooks)
-        self.console = console
-        self.attempt = -1
-        self.shells: list[str] = []
-        self.suspends: list[dict] = []
-        self.joined_after = True
-        self.request_after = REQUEST_OUTPUT
-
-    def adb_run(self, *arguments: str, timeout: float = 0) -> object:
-        self.shells.append(arguments[-1])
-        status = 0 if self.tooks else 124
-        return types.SimpleNamespace(returncode=0, stdout=f"status={status}\\n".encode())
-
-    def mark_log(self) -> str:
-        self.attempt += 1
-        return WAKE_MARK
-
-    def prepare_suspend(self) -> None:
-        self.calls.append("prepare")
-
-    def suspend_and_wake(self, watch: bool = False, frozen: Callable[[], None] | None = None,
-                         prepared: bool = False, stay: float = 0) -> None:
-        self.calls.append("suspend")
-        self.suspends.append({"watch": watch, "frozen": frozen is not None, "prepared": prepared, "stay": stay})
-        if frozen is not None:
-            frozen()
-
-    def log_text(self) -> str:
-        took = self.tooks[min(self.attempt, len(self.tooks) - 1)] if self.tooks else None
-        log = log_line(2270, 2270, "I", runner.SYNC_TAG, WAKE_MARK, "03:10:00.000")
-        log += wpa_line(self.START, "03:10:05.000")
-        if took is not None:
-            seconds = 5 + took
-            log += wpa_line(self.DONE, f"03:{10 + int(seconds) // 60}:{int(seconds) % 60:02d}.{int(seconds * 1000) % 1000:03d}")
-        return log
-
-    def log_size(self) -> int:
-        return 0
-
-    def log_since(self, offset: int) -> str:
-        return self.console
-
-    def joined(self) -> bool:
-        return self.joined_after
-
-    def wake_request(self) -> str:
-        return self.request_after
-
-    def status(self) -> str:
-        return OFF if not self.calls.count("cmd wifi set-wifi-enabled enabled") else JOINED
-
-
-class ConnectDelayRowTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.clock = FakeClock()
-        patch = mock.patch.object(runner, "time", self.clock)
-        patch.start()
-        self.addCleanup(patch.stop)
-        output = contextlib.redirect_stdout(io.StringIO())
-        output.__enter__()
-        self.addCleanup(output.__exit__, None, None, None)
-
-    def row(self, guest: ConnectDelayGuest) -> str | None:
-        return runner.check_suspend_in_connect_delay(guest)
-
-    def test_a_suspend_that_lands_in_the_delay_and_ends_with_a_working_network_passes(self) -> None:
-        guest = ConnectDelayGuest([64.2])
-        note = self.row(guest)
-        self.assertEqual(note, "the station joined and a request works after a suspend 1 attempt(s) in, the connect "
-                               "held 64 s across the stay, the console quiet")
-        # Wi-Fi off first, then on in the command that waits for the supplicant's connect, then the suspend, which
-        # waits for nothing else: the log stream was confirmed before, so the suspend follows the connect start at once.
-        self.assertEqual(guest.calls, ["cmd wifi set-wifi-enabled disabled", "prepare", "suspend"])
-        self.assertEqual(guest.suspends, [{"watch": False, "frozen": True, "prepared": True,
-                                           "stay": runner.CONNECT_STAY_SECONDS}])
-        self.assertIn("cmd wifi set-wifi-enabled enabled; timeout 60 logcat -T 1 -m 1 -e 'Trying to associate with'",
-                      guest.shells[0])
-
-    def test_the_stay_is_longer_than_a_bss_that_nothing_holds_lives(self) -> None:
-        # cfg80211 forgets an unheld BSS after 30 s; the stay is twice that.
-        self.assertGreaterEqual(runner.CONNECT_STAY_SECONDS, 2 * 30)
-
-    def test_a_suspend_that_missed_the_delay_is_tried_again(self) -> None:
-        guest = ConnectDelayGuest([2.07, 64.2])
-        self.assertIn("2 attempt(s) in", self.row(guest))
-        self.assertEqual(len(guest.suspends), 2)
-
-    def test_a_suspend_that_never_lands_in_the_delay_proved_nothing_and_fails(self) -> None:
-        guest = ConnectDelayGuest([2.07])
-        with self.assertRaisesRegex(runner.Failure, "did not land inside the connect delay in 3 attempts"):
-            self.row(guest)
-        self.assertEqual(len(guest.suspends), runner.CONNECT_ATTEMPTS)
-
-    def test_a_station_that_stays_not_joined_fails_the_row(self) -> None:
-        guest = ConnectDelayGuest([64.2])
-        guest.joined_after = False
-        with self.assertRaisesRegex(runner.Failure, "the station is joined and a request works: the station is not "
-                                                    r"joined \(after 120 s\)"):
-            self.row(guest)
-        self.assertEqual(len(guest.suspends), 1)
-
-    def test_a_station_that_says_joined_with_no_working_network_fails_the_row(self) -> None:
-        guest = ConnectDelayGuest([64.2])
-        guest.request_after = "request t=1000.5 ping_rc=2 dns_tcp_bytes=0\n"
-        with self.assertRaisesRegex(runner.Failure, "the framework says the station is joined, but the gateway did "
-                                                    "not answer a ping"):
-            self.row(guest)
-
-    def test_a_kernel_warning_and_a_call_trace_fail_the_row_although_the_network_works(self) -> None:
-        guest = ConnectDelayGuest([64.2], console=(
-            "[  139.25][   T9] WARNING: CPU: 0 PID: 9 at net/wireless/sme.c:845 __cfg80211_connect_result+0x1c\n"
-            "[  139.26][   T9] Call Trace:\n"))
-        with self.assertRaisesRegex(runner.Failure, r"the guest console says: \[  139.25\]\[   T9\] WARNING: CPU: 0.*"
-                                                    "the guest console says: .*Call Trace:"):
-            self.row(guest)
-
-    def test_a_supplicant_that_never_begins_to_connect_fails_the_row(self) -> None:
-        guest = ConnectDelayGuest([])
-        with self.assertRaisesRegex(runner.Failure, "the supplicant did not begin to connect within 60 s"):
-            self.row(guest)
-        self.assertEqual(guest.suspends, [])
-
-    def test_the_row_is_the_last_of_the_suspend_sections(self) -> None:
-        names: list[str] = []
-
-        class Report:
-            def section(self, name: str, guest: object, body: object) -> None:
-                names.append(name)
-
-        runner.suspend_sections(object(), Report())
-        self.assertEqual(len(names), 4, names)
-        self.assertTrue(names[-1].startswith("a stay with the emulator stopped inside the station's connect delay"))
 
 
 if __name__ == "__main__":

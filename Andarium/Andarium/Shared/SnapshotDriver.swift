@@ -114,10 +114,6 @@ extension AppModel {
         // The choices on disk are the ones the restore settles; a change
         // made a moment ago is not lost.
         persistNow()
-        // A request to open an Android app that waits for the restore is
-        // released only once this has adopted what the restore left.
-        androidApps.restoring = true
-        defer { androidAppsRestoreFinished() }
         let result = await snapshotDriver.restoreSnapshot(id, guest: guest)
         switch result {
         case .done(let restored):

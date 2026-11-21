@@ -40,17 +40,6 @@ uml_add_tooling_test(
     LABELS android;audit
     TIMEOUT 300)
 
-# TalkBack, eSpeak NG and libsonic are pinned in the metadata and in the
-# dependency manifest alike, and a checkout is accepted only at its pin and
-# its series' tree.
-uml_add_tooling_test(
-    NAME lineage24-accessibility-source-contract
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_accessibility_source_contract.py
-        --source-root ${PROJECT_SOURCE_DIR}
-    LABELS android;audit
-    TIMEOUT 120)
-
 uml_add_tooling_test(
     NAME lineage24-mesa-venus-port-generator
     COMMAND ${Python3_EXECUTABLE} -B
@@ -90,24 +79,6 @@ uml_add_tooling_test(
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_camera_app_contract.py
         --source-root ${PROJECT_SOURCE_DIR}
-    LABELS android;audit
-    TIMEOUT 60)
-
-# The TalkBack the image builds is the package Andarium's screen-reader switch
-# names, installed where the target-files verifier requires it.
-uml_add_tooling_test(
-    NAME lineage24-accessibility-package
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_accessibility_package.py
-    LABELS android;audit
-    TIMEOUT 60)
-
-# The licence modules of the series that build TalkBack and eSpeak NG name what
-# each holds, for the image's NOTICE, with the text of every copyleft kind.
-uml_add_tooling_test(
-    NAME lineage24-accessibility-licenses
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_accessibility_licenses.py
     LABELS android;audit
     TIMEOUT 60)
 
@@ -240,67 +211,6 @@ uml_add_tooling_test(
 set_tests_properties(android17-oldapp-switch-command PROPERTIES
     SKIP_RETURN_CODE 77)
 
-# The icon renderer (android/lineage-24/overlay/app_icons, the app KernariumIcons): what it shares with
-# kernarium_apps (the shell user's uid, the shape of a request, a path's rules, the sizes and bounds) on a plain
-# JVM and again with one rule removed at a time, where the named rows must fail; and, as text with a mutant for
-# each rule, what its provider, worker, drawing and service must do and must not touch, with its manifest
-# (unprivileged, direct-boot aware, a guarded provider and an isolated service, nothing else) and build file.
-# It skips (77) where the host has no JDK.
-uml_add_tooling_test(
-    NAME android17-icon-renderer
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_icon_renderer.py
-    LABELS android
-    TIMEOUT 600)
-set_tests_properties(android17-icon-renderer PROPERTIES
-    SKIP_RETURN_CODE 77)
-
-# The launcher-application shell command (android/lineage-24/overlay/app_shortcuts) on a plain JVM:
-# the component grammar, the labels' escaping and bounds, the listing's rule, digest and icon keys,
-# the framing of every answer read back by a parser of the test's own, the icon records, the launch's
-# refusals and argument vector, how a start's output is read, the child process (real processes), the
-# icon source's bound, the resource files' order and the exit statuses against a fake platform, and
-# again with one rule removed at a time, where the named rows must fail. It also checks the image's
-# wiring of the command (product, build check, verifier list, no policy), that the sources write and
-# open nothing, and what the Android glue must not do (as text, each rule with a mutant). It skips
-# (77) where the host has no JDK.
-uml_add_tooling_test(
-    NAME android17-app-shortcuts-command
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_app_shortcuts_command.py
-    LABELS android
-    TIMEOUT 900)
-set_tests_properties(android17-app-shortcuts-command PROPERTIES
-    SKIP_RETURN_CODE 77)
-
-# The launcher-application runner without a guest: the probe packages (manifests read back, the bad icon and
-# the caller), the strict parsers of the command's answers (each deviation of a header, a row, a label and an
-# icon record, and of the sampler's answer), the judgement of what the tool's process holds and of the
-# renderer's two processes, and every step against a scripted guest that follows the contract and differs one
-# way at a time. It skips (77) where the host has no keytool and jarsigner.
-uml_add_tooling_test(
-    NAME android17-app-shortcuts-runner
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_app_shortcuts_runner.py
-    LABELS android
-    TIMEOUT 300)
-set_tests_properties(android17-app-shortcuts-runner PROPERTIES
-    SKIP_RETURN_CODE 77)
-
-# The text message service's logic on a plain JVM: the PDUs it builds, read back
-# with the platform's own UTF-16 decoder, the request's parsing and the answers,
-# the delivery record (never twice, at every point a request can end at), and the
-# host channel's server, frame and admission over stand-ins for the platform's
-# socket classes. It skips (77) where the host has no JDK.
-uml_add_tooling_test(
-    NAME android17-sms-service
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_sms_service.py
-    LABELS android
-    TIMEOUT 300)
-set_tests_properties(android17-sms-service PROPERTIES
-    SKIP_RETURN_CODE 77)
-
 # The old-application runner without a guest: the probe application's two
 # packages (manifest, DEX file, libraries built for armv7 when the host has the
 # tools), the verdicts, the permission review and the commands it sends.
@@ -356,18 +266,6 @@ uml_add_tooling_test(
     LABELS android
     TIMEOUT 30)
 
-# The start_guest of the thermal, keyboard and mouse, gamepad, camera, Wi-Fi
-# network and orientation runners (the compass and old-application runners
-# start through the orientation runner's) against a stand-in emulator and an
-# adb that does nothing: a start that fails or is interrupted stops the
-# emulator it launched, and a guest that booted is returned running.
-uml_add_tooling_test(
-    NAME android17-runner-start-failure
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_runner_start_failure.py
-    LABELS android
-    TIMEOUT 180)
-
 # The gamepad runner without a guest: the host's end of the wire against the
 # golden frames and the C++ header, the controller families against the
 # drivers' own report structures, the parsers of what the guest prints, the
@@ -378,18 +276,6 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_gamepad_runner.py
     LABELS android
     TIMEOUT 60)
-
-# The text-message runner without a guest: its frames and requests against the
-# golden file, the record file it writes, its readers of the guest's logs and
-# dumps, its judgements of a round of rows, its host and adb-server client
-# against fakes on loopback, the catalogue of rows, and a parse of the probe's
-# sources and build script.
-uml_add_tooling_test(
-    NAME android17-sms-runner
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_sms_runner.py
-    LABELS android
-    TIMEOUT 120)
 
 # The keyboard and mouse runner's reading of the guest's input dump and of the
 # probe's log, its VNC client's wire, and its key table against the launcher's.

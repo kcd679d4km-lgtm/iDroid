@@ -28,7 +28,6 @@ struct LowSpaceOverlay: View {
                         .accessibilityHidden(true)
                     Text(SpacePauseWords.title(pause).keepingTogether)
                         .font(.title3.weight(.bold))
-                        .accessibilityAddTraits(.isHeader)
                 }
                 Text(SpacePauseWords.detail(pause).keepingTogether)
                     .font(.subheadline)
@@ -45,15 +44,7 @@ struct LowSpaceOverlay: View {
         }
         .transition(.opacity)
         .accessibilityElement(children: .contain)
-        .accessibilityAddTraits(.isModal)
         .accessibilityIdentifier("space-pause")
-        .onAppear { VoiceOver.screenChanged(Self.spoken(pause)) }
-    }
-
-    /// What VoiceOver says as the screen appears: the words the screen shows.
-    /// A test asks for a language by `locale`.
-    static func spoken(_ pause: SpacePause, locale: Locale = .current) -> String {
-        "\(SpacePauseWords.title(pause, locale: locale)). \(SpacePauseWords.detail(pause, locale: locale))"
     }
 
     @ViewBuilder

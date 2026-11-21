@@ -24,7 +24,6 @@
 	xor	edi, edi
 
 	mov	r8d, BENCH_ITERATIONS
-	jmp	.Lloop
 .Lloop:
 	mov	rax, qword ptr [rbx]
 	add	rax, rdi
@@ -39,9 +38,7 @@
 	lea	rdi, [rdi + 1]
 	sub	r8, 1
 	jnz	.Lloop
-	jmp	.Lresult
 
-.Lresult:
 	mov	r9d, BENCH_ITERATIONS
 	cmp	qword ptr [rbx + 24], r9
 	jne	.Lfailure

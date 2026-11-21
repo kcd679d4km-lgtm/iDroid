@@ -290,94 +290,6 @@ void test_gadget_cache_budget_option()
 		"the gadget cache budget ignored trailing text");
 }
 
-void test_aot_option()
-{
-	using uml::runtime::AotSelection;
-	const char *absent[]{"uml-test"};
-	require(uml::emulator::prepare_emulator_options(
-		1, absent, "/tmp/rootfs.erofs").aot == AotSelection::automatic,
-		"ahead-of-time code was not left to the default");
-	const char *bare[]{"uml-test", "--aot", "ip=dhcp"};
-	auto options = uml::emulator::prepare_emulator_options(
-		3, bare, "/tmp/rootfs.erofs");
-	require(options.valid && options.aot == AotSelection::on &&
-		!contains(options, "--aot") && contains(options, "ip=dhcp"),
-		"--aot was not consumed as on");
-	const char *off[]{"uml-test", "--aot=on", "--aot=off"};
-	options = uml::emulator::prepare_emulator_options(
-		3, off, "/tmp/rootfs.erofs");
-	require(options.valid && options.aot == AotSelection::off &&
-		!contains(options, "--aot=on") && !contains(options, "--aot=off"),
-		"the last --aot= did not win");
-	const char *automatic[]{"uml-test", "--aot=off", "--aot=auto"};
-	require(uml::emulator::prepare_emulator_options(
-		3, automatic, "/tmp/rootfs.erofs").aot == AotSelection::automatic,
-		"--aot=auto did not restore the default");
-	const char *unknown[]{"uml-test", "--aot=maybe"};
-	require(!uml::emulator::prepare_emulator_options(
-		2, unknown, "/tmp/rootfs.erofs").valid,
-		"an unknown --aot value was accepted");
-	const char *empty[]{"uml-test", "--aot="};
-	require(!uml::emulator::prepare_emulator_options(
-		2, empty, "/tmp/rootfs.erofs").valid,
-		"an empty --aot value was accepted");
-}
-
-/* The release a launch boots, which the launcher states: the ID and the two
- * digests (--aot-release=), consumed by the options and never forwarded to the
- * kernel. A launch that states none boots no Android release. */
-void test_aot_release_option()
-{
-	const std::string manifest(64, 'a');
-	const std::string system(64, '0');
-	const auto stated = uml::emulator::aot_release_argument(
-		"20261115-los24-r28", manifest, system);
-	require(stated == "--aot-release=20261115-los24-r28," + manifest + "," +
-		system, "the stated release is not the argument's form");
-
-	const char *absent[]{"uml-test", "ip=dhcp"};
-	auto options = uml::emulator::prepare_emulator_options(
-		2, absent, "/tmp/rootfs.erofs");
-	require(options.valid && !options.aot_release_stated,
-		"a release was stated without being asked for");
-
-	const char *given[]{"uml-test", stated.c_str(), "ip=dhcp"};
-	options = uml::emulator::prepare_emulator_options(
-		3, given, "/tmp/rootfs.erofs");
-	require(options.valid && options.aot_release_stated &&
-		options.aot_release_id == "20261115-los24-r28" &&
-		options.aot_manifest_sha256[0] == 0xaa &&
-		options.aot_manifest_sha256[31] == 0xaa &&
-		options.aot_system_sha256[0] == 0 &&
-		options.aot_system_sha256[31] == 0 &&
-		!contains(options, stated) && contains(options, "ip=dhcp"),
-		"--aot-release= was not consumed as the release a launch boots");
-
-	const char *twice[]{"uml-test", stated.c_str(), stated.c_str()};
-	require(!uml::emulator::prepare_emulator_options(
-		3, twice, "/tmp/rootfs.erofs").valid,
-		"two releases were accepted for one launch");
-
-	/* What is not a release is not stated: no ID, a short digest, an upper
-	 * case digest, a non-hex digest, a missing digest, text after them. */
-	for (const std::string &bad : std::initializer_list<std::string>{
-		std::string{"--aot-release="},
-		"--aot-release=," + manifest + "," + system,
-		"--aot-release=id," + manifest.substr(1) + "," + system,
-		"--aot-release=id," + std::string(64, 'A') + "," + system,
-		"--aot-release=id," + std::string(63, 'a') + "g," + system,
-		"--aot-release=id," + manifest,
-		"--aot-release=id," + manifest + "," + system + ",x",
-		"--aot-release=" + std::string(65, 'x') + "," + manifest + "," + system}) {
-		const char *arguments[]{"uml-test", bad.c_str()};
-		require(!uml::emulator::prepare_emulator_options(
-			2, arguments, "/tmp/rootfs.erofs").valid,
-			"a malformed release was accepted");
-	}
-	require(uml::emulator::aot_release_argument("id", "ab", system).empty(),
-		"a short digest made an argument");
-}
-
 void test_memory_limit_option()
 {
 	const char *absent[]{"uml-test"};
@@ -855,8 +767,6 @@ int main()
 		test_x86_64_kernel_memory_accounting_policy();
 		test_guest_memory_budget_matches_kernel_memparse();
 		test_gadget_cache_budget_option();
-		test_aot_option();
-		test_aot_release_option();
 		test_memory_limit_option();
 		test_jit_tier_option();
 		test_guest_hibernation_option();

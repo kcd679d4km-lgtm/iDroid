@@ -15,8 +15,7 @@ outside this repository.
 ## Producer boundary
 
 `build/prepare-sources.sh` is the only producer command allowed to use the
-network; it pins the Android source, the guest Mesa source and the sources of
-TalkBack and eSpeak NG. Patching, builds,
+network; it pins the Android source and the guest Mesa source. Patching, builds,
 verification, image assembly, and publication are offline (a `build/make` topic,
 route `p0002`, keeps `lunch` from calling LineageOS's network-reading
 `roomservice.py`).
@@ -47,11 +46,6 @@ guest bundle.
   synchronized as one verified unit.
 - `third_party/mesa-venus/` and `third_party/meson2hermetic/` pin the guest
   Mesa source and the Soong-port converter, each with its own series.
-  `third_party/accessibility/` pins the upstream commits of TalkBack, eSpeak NG
-  and libsonic, which `build/prepare-sources.sh` materializes at
-  `external/talkback`, `external/espeak-ng` and `external/espeak-ng/sonic`
-  with the series of `dependencies/patches/` (see
-  [Accessibility](#accessibility)).
 - `tools/` holds the regenerators, verifiers and release tools; `support/`
   holds the tracked disk, release and instance policies.
 
@@ -78,16 +72,12 @@ UML implementation. `Build.SOC_MANUFACTURER` and `SOC_MODEL` are `Kernarium` and
   are 4 KiB aligned. ABI support does not lower the minimum installable target
   SDK; test an older APK with `adb install --bypass-low-target-sdk-block`.
 - **Applications.** Settings, Trebuchet, Files, Package Installer, the LineageOS
-  WebView, LatinIME, ThemePicker, Messaging for the host's
-  [text messages](#text-messages), TalkBack and eSpeak NG
-  ([Accessibility](#accessibility)) and a curated set (camera, gallery, music, calendar,
-  calculator, PDF viewer, backup). There is no browser, app store or install
-  restriction, and no Google apps, services or closed-source Google code;
-  open-source components built from source are allowed and are the ones listed
-  here. Applications that need absent hardware or
+  WebView, LatinIME, ThemePicker and a curated set (camera, gallery, music, calendar,
+  calculator, PDF viewer, backup). There is no browser, app store, install
+  restriction, Google or microG. Applications that need absent hardware or
   LineageOS cloud services are excluded by name in the product makefile, and the
   build and the verifier assert that list.
-- **Signature spoofing.** The image ships no microG, and
+- **Signature spoofing.** The image ships no Google or microG software, and
   no guest interface names Google's services; Andarium names them only to say
   that they are left out on purpose ([No Google
   apps](../../Andarium/README.md#runtime)). LineageOS's restricted
@@ -101,8 +91,7 @@ UML implementation. `Build.SOC_MANUFACTURER` and `SOC_MODEL` are `Kernarium` and
   entry, the Bluetooth developer option, the media output switcher, and the
   hearing, Bluetooth pairing, telephony, biometric and USB pages) and hides the
   Wi-Fi hotspot, wireless display and System update pages.
-- **Hardware not advertised.** Telephony (apart from receiving text
-  messages), NFC, UWB, Thread,
+- **Hardware not advertised.** Telephony, NFC, UWB, Thread,
   biometric, secure element, USB, Bluetooth and Trusty; the vibrator only on a
   device with haptics ([Haptics](#haptics)) and the cameras only as the host
   has them ([Camera](#camera)). The host's position is declared on
@@ -160,32 +149,6 @@ overlay owns the layouts and the verifier requires them. The launcher reads its
 layout once, so a guest created earlier keeps its home screen. An item the
 launcher adds by itself, such as a newly installed application, goes on the
 first page while it has room, then on the later pages in order (route `p0010`).
-
-### Accessibility
-
-The image carries TalkBack, Android's screen reader, and eSpeak NG, a speech
-engine, as the applications `TalkBack` and `eSpeakNG` in `/product/app`; the
-image turns nothing on by itself, and Andarium turns TalkBack on only at the
-person's request. Both are open source and built from source by the image
-build, signed with the image's other applications. `third_party/accessibility/`
-pins the upstream commits of TalkBack, eSpeak NG and libsonic;
-`build/prepare-sources.sh` materializes them at `external/talkback`,
-`external/espeak-ng` and `external/espeak-ng/sonic`, TalkBack and eSpeak NG
-with the series of `dependencies/patches/talkback` and `espeak-ng`; and
-`tools/verify-accessibility-source.py` checks the pins against
-`dependencies/manifest.tsv`, the series and the checkouts, as the preflight,
-the patch step and the build run it. A series holds the changes to the project
-and its Soong build, `Build with Soong`: the Soong modules, the manifests, and
-the licence modules the image's NOTICE reports. The eSpeak NG series then
-installs the application's JNI library on the application's own partition, as
-the product's generic system rule requires. The TalkBack series also patches
-out the three libraries the tree lacks and leaves every Google Play services
-library out of the phone build, which recognises no text in images (OCR) as a
-result. It leaves every network and Google service permission out as well:
-TalkBack requests none, and its settings offer no web page, store page or image
-description. eSpeak NG requests none either. The target-files verifier requires
-both applications and refuses a request by either for a network or Google
-service permission.
 
 ### Motion sensors
 
@@ -510,51 +473,6 @@ candidate's smoke test is
 restart mode, `android-camera-restart`, boots again over a lens's colour data
 and expects the same cameras).
 
-### Text messages
-
-The guest receives text messages from the host and sends none. `KernariumSms`
-(`overlay/sms/`) is a persistent system application in an SELinux domain of its
-own that listens on vsock port 5560 and takes a request only from host CID 2.
-It has no other entry point, so neither an adb shell, adb over the network
-included, nor an application can deliver a message. `HostFrame.java` and
-`Andarium/AndariumCore/Sources/AndariumCore/GuestSmsChannel.swift` own the
-frame. A message is a sender (a number or a short name), a text of limited
-length and an identifier the host chooses for it. `Message.java` and
-`Andarium/AndariumCore/Sources/AndariumCore/Adb/GuestSms.swift` own what is
-accepted and refused, each limit stated once.
-
-The target-files verifier holds that boundary. Only the reviewed types may
-create, bind or listen on a vsock socket, and no domain but the service holds a
-permission on its vsock sockets, except the platform's own `getattr` for
-`dumpstate`, which stats a socket and carries no data. Of the data, only the
-platform's managers of application data reach it. For the services it may find,
-`system_app_data_file` and the vsock sockets of other types, the service holds
-only what every ordinary application domain holds through one platform rule,
-plus the activity, package and role services.
-
-The service hands Android the message as SMS-DELIVER PDUs, concatenated when
-the text needs more than one part: an `SMS_DELIVER` broadcast to the SMS role
-holder, then `SMS_RECEIVED` to the applications that may receive SMS, so
-Messaging stores and notifies and applications holding `RECEIVE_SMS` get it.
-With no SMS role holder and no Messaging installed, the message is stored in
-the inbox, and with no SMS provider either it goes only to the `SMS_RECEIVED`
-receivers. The broadcasts are sent, not awaited, so a handed-over answer says
-only that Android took the message. Each message carries an identifier the host
-chooses, and the host marks a repeated send of a message whose answer it did not
-get as a retry. The service records the message in its device-protected storage
-before handing it over, answers a retry from that record without handing
-anything over, and closes an identifier that a retry finds unrecorded, so no
-message is handed over twice. When the record cannot say whether a message was
-handed over, the answer is uncertain, and that identifier is never handed over
-afterwards.
-
-The product carries Messaging and TelephonyProvider and declares
-`android.hardware.telephony.messaging` and `config_sms_capable` (the SMS role
-needs both), but not `android.hardware.telephony`: there is no radio, SIM or
-SMS sending. Without TeleService, TelephonyProvider requests
-`MANAGE_APP_OPS_MODES` itself (route `p0034`), which its one-time-code check
-needs to reassert the SMS application's app-ops.
-
 ### Networking
 
 The guest's one network device, `eth0`, is the host's user-mode network (SLiRP,
@@ -708,9 +626,7 @@ channel: route `p0007` records the setting in `persist.sys.usb.config` and
 restarts adbd instead of stopping it, and route `p0011` refuses every key but the
 host's, with no prompt, while USB and wireless debugging are both off. `adb root`
 is refused at once on a `user` build whatever the authorization policy, with
-AOSP's answer for a production build (route `p0011`). Route `p0011` also makes adbd
-refuse an `adb reverse` whose device side is a vsock socket, the socket family of the
-host-to-guest channels, or a descriptor adbd already holds. SELinux stays enforcing in
+AOSP's answer for a production build (route `p0011`). SELinux stays enforcing in
 both variants. `tests/integration/android/run_android_adb_debugging.py`
 qualifies this contract.
 
@@ -1038,92 +954,6 @@ the compatibility layer.
   and statuses. `tests/integration/android/run_android_oldapp_switch.py`
   qualifies it ([testing](../../docs/testing.md#android)).
 
-### Launcher applications
-
-Andarium's Add to Home Screen puts an Android application's icon on the iOS Home
-Screen, so the host asks the guest which applications have a launcher entry, with
-their labels and icons, and has one started. The image carries one command for
-both, `kernarium_apps` (`overlay/app_shortcuts`, a Java tool that `app_process`
-starts, installed on system_ext like `kernarium_oldapp`), and one application that
-draws, `KernariumIcons` (`overlay/app_icons`). The command runs as the adb shell
-user, holds no permission of its own and writes nothing: no file, property or
-setting. It reads the labels (string resources) and nothing else of an application's
-resources: it opens no image, drawable or icon file, and `icons` only asks the
-renderer for each picture and relays a PNG it has checked. It builds the framework's
-system assets for the labels itself, without the static
-overlays that target the framework (their idmaps come from `idmap2`, which the
-shell domain may not execute), and falls back to the framework's own
-initialisation when that is not possible. Reading any resources initialises the
-framework's display metrics, which read `qemu.sf.lcd_density` and fall back
-when the shell domain may not: the policy's one line for the tool
-(`overlay/sepolicy/system_ext/private/kernarium_apps.te`) is a `dontaudit` of
-that read, so no call draws a denial and the shell domain gains no permission.
-
-- **Renderer.** `KernariumIcons` (`com.kernarium.icons`) is an ordinary application of
-  system_ext: signed with the default key, in `app/` and not `priv-app/`, with no
-  launcher entry, no permission, no network, no backup, and no SELinux rule of its
-  own (its processes run as `untrusted_app` and `isolated_app`). Its one provider
-  (`content://com.kernarium.icons`) only brokers: the platform lets the shell user
-  and the system in (`ACCESS_CONTENT_PROVIDERS_EXTERNALLY`) and the provider
-  refuses any other uid again. It binds its one service, which runs in an isolated
-  process, and that process opens the target application's package files and
-  runtime overlays and draws the icon (a fixed density, day mode and locale, so
-  that a key is one picture); the PNG comes back to the tool through the provider. The shell
-  user cannot bind a service, so the tool reaches the provider through the activity
-  manager, for the user it listed the applications for, and takes only the image's own
-  provider (package, exact class, system application), checked at every acquisition.
-  A worker that dies or hangs costs the one icon (it is `error`, never
-  retried at a smaller size) and the next icon is drawn by a fresh one; a provider
-  that does not answer a call is no renderer at all. An image
-  without the renderer, or with another package's provider for its authority, fails
-  `icons` with status 1 and one line, and the tool's
-  other commands are unaffected. Each start of the isolated process leaves one
-  audit record, AOSP's own and tagged with its bug note: a denied `getattr` of the
-  application's data directory, which has no effect. `check_icons_app` in
-  `tools/verify-target-files.py` holds the package to this description.
-
-- **Entries.** One entry is a launcher activity of the foreground user: enabled for
-  that user (the package manager's own answer, so an alias the manifest disables
-  and `pm enable` enabled counts), exported, handling `MAIN` with `LAUNCHER`,
-  asking for no permission the shell user lacks. Its identity is `package/activity`, which an update or a
-  reinstall keeps. The grammar of both names (ASCII, at most 255 bytes each) is
-  the one place that says what the tool lists, takes and passes to a process.
-- **Commands.** `digest` prints a header block whose digest changes with the set
-  of entries, their versions and update times (a built-in application that was never
-  updated also carries the image's build time, an input of its own: its files carry one
-  fixed time), the foreground user and Android's language (it opens no application's
-  resources); `list` prints the
-  block and one row per entry with the label in Android's language list (read for one
-  fixed configuration, so the list is its only input), a built-in flag and an icon key; `icons` answers one PNG record (192 by 192, adaptive
-  icons composed from their layers with no mask, drawn for a fixed density, day mode
-  and locale so that a key is one picture) for each of up to eight components, with
-  its length and SHA-256; labels and icons come from the application's effective
-  resource files for the user (splits, shared libraries and overlays); the tool
-  passes on only a PNG whose signature, header (with its checksum), dimensions
-  (the size asked), 8-bit RGB or RGBA, non-interlaced layout and 96 KiB bound it has
-  checked, and an icon whose picture fails the check is `error`; `launch` starts exactly one entry as a
-  launcher's tap does, by running `cmd activity start-activity` with separate
-  arguments, and refuses (status 2) anything that is not an entry now.
-  A change of the set is noticed by comparing digests, and an icon is fetched only when
-  its key changed.
-- **Bounds.** A label is made safe (no control, separator, bidirectional or
-  invisible format character) and cut to 80 code points, and cleaned only as far as
-  the cut needs; one that cannot be read or does not fit in memory is listed under its
-  package name and costs no other entry; at most 8 entries per
-  package, 1024 rows, 8 icons per call, 96 KiB per PNG, 20 s before no further icon is
-  started and 7 s for one icon's request in the renderer (its queue, bind and drawing together: a drawing that
-  hangs or exhausts memory, which its isolated process contains, is `error` for that icon
-  alone) within 8 s of the tool's own, after which the renderer is taken as not there; every answer is under 1 MiB, and a command
-  that fails prints nothing on standard output and one line of the tool's own words
-  on standard error. A question without an answer (the foreground user, a
-  permission, the configuration) fails the command: there is no substitute.
-  The exit statuses are 0 done, 1 failure, 2 refused, 64 usage.
-- **Kept by a later release.** The command's name, verbs, answer framing, grammar,
-  bounds and statuses; an older image has no command (the shell's status 127) and
-  the host does not offer the feature. The renderer's authority, request and answer
-  are between the tool and the application of one image, which ship together. `tests/integration/android/run_android_app_shortcuts.py`
-  qualifies it ([testing](../../docs/testing.md#android)).
-
 ### Branding and diagnostics
 
 The Setup Wizard names the system Andarium through its runtime resource
@@ -1204,21 +1034,15 @@ devices (Virtio video, [`darwin/device/video`](../../darwin/device/video/README.
 and the product exposes them through Codec2. The vendor service
 `android.hardware.media.c2-service-v4l2` of `external/v4l2_codec2` (route
 `p0018`, which also adds the HEVC component) serves AVC and HEVC encoders and
-AVC, HEVC and VP9 decoders beside the software `c2.android.*` components;
-MediaCodec chooses the hardware decoders first. The VP9 decoder lists Profile 0
-and, where the host's hardware decodes it, Profile 2 (10-bit), which is shown
-as 8-bit as HEVC Main 10 is. A VP9 stream of 12 bits or of 4:4:4 or 4:2:2 is
-refused by the hardware decoder, so a player that picks the first VP9 decoder
-without stating the profile (Media3, for a WebM or MP4 file) reports a playback
-error; AV1, which the host does not decode, stays with the software decoder.
-Encoder parameters come from the device, and a capability the device does not
-list is not advertised. HDR content is shown as SDR because the host has no
-P010 sampler.
+decoders beside the software `c2.android.*` components; MediaCodec chooses the
+hardware decoders first. Encoder parameters come from the device, and a
+capability the device does not list is not advertised. HDR content is shown as
+SDR because the host has no P010 sampler.
 
 `overlay/config/media_codecs_c2.xml` is the product's one vendor codec list. Its
 performance points, the encoder floors, the instance limits and pixel rates, and
 the service's SELinux and seccomp additions are required by the target-files
-verifier, which also refuses a hardware decoder beyond the three. Qualification is
+verifier, which also refuses a hardware decoder beyond the two. Qualification is
 opt-in
 ([`../../docs/testing.md`](../../docs/testing.md#android)).
 
@@ -1341,12 +1165,7 @@ android/lineage-24/tools/install-release.py \
 
 The installer validates the candidate, including every system disk partition
 hash, and installs it atomically below `.build/android/releases`. It never
-replaces an existing release. `--aot-artifact` also installs the release's AOT
-artifact (`tools/aot/release_artifact.py`) below `.build/android/aot`, once it
-verifies against the release; `metadata/accepted-aot.env` accepts it, and its
-`LINEAGE24_ACCEPTED_AOT_ARCHIVES` field is whether the App Store and TestFlight
-configurations may carry it. The artifact is not part of the release's file
-inventory. Apple CMake does not import the rootfs release
+replaces an existing release. Apple CMake does not import the rootfs release
 and does not invoke Repo, Soong, Kbuild, image assembly, publication, or
 transport.
 
@@ -1432,15 +1251,6 @@ implementation, `BuildNumber.legacyRange` in AndariumCore, and
 | same build, another release or system disk, or a `data.img` without `instance.json` | refuse |
 | an unfinished update, same build | retry with its snapshot kept, restore, or reset |
 | an unfinished update, newer build | restore the pre-update snapshot, then update directly to the newer build |
-
-The Andarium app adds one rule that the reference implementation and the
-vectors do not carry: an unsigned proof image (a manifest whose `acceptance` is
-`unsigned-proof`) never updates an instance that has data, and an instance a
-proof created never updates to another system. Both are refused as a mismatch,
-also when a proof and a signed release share a release ID, and Erase is the way
-out; Set up does not replace such files either. The record
-of an instance a proof created is schema 2 with `unsigned_proof` true, which a
-reader of schema 1 refuses, and a signed release's record stays schema 1.
 
 An update is finished when the host first sees the guest reach
 `sys.boot_completed`: the pending update is cleared and the snapshot deleted. A

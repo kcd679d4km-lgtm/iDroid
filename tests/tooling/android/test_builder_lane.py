@@ -15,15 +15,11 @@ import json
 import os
 import random
 import re
-import shlex
 import shutil
-import signal
-import stat
 import struct
 import subprocess
 import sys
 import tempfile
-import time
 import traceback
 import xml.etree.ElementTree as ET
 import zipfile
@@ -229,31 +225,20 @@ def synthetic_arm_elf(
     return with_imports(bytes(payload), False, imports) if imports is not None else bytes(payload)
 
 
-# The permission the braille keyboard used to request for a receiver guard nobody declared: it is
-# on neither application's list of permissions.
-OLD_GUARD_PERMISSION = "com.google.android.marvin.talkback.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
-# The guard that androidx core adds to TalkBack's manifest, named after the installed package.
-TALKBACK_GUARD_PERMISSION = "com.android.talkback.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
-
-
 def synthetic_compiled_manifest(
     target_sdk: int | None, *, string_value: bool = False, debuggable: bool | str | None = None,
     permissions: tuple[str, ...] = (), declared: tuple[str, ...] = (), utf8: bool = False,
-    sdk23: tuple[str, ...] = (),
 ) -> bytes:
     """A compiled manifest with <uses-sdk>, which carries targetSdkVersion when given, and, when
     debuggable is not None, an <application> that carries android:debuggable: a literal boolean,
     or a resource reference when debuggable is "reference". It requests each of `permissions` with
-    <uses-permission> (and each of `sdk23` with <uses-permission-sdk-23>) and declares each of
-    `declared` with <permission>; a name that starts with "@" is a resource reference, "@" and the
-    hexadecimal id; the string pool is UTF-8
+    <uses-permission> and declares each of `declared` with <permission>; the string pool is UTF-8
     when `utf8` is set, UTF-16 as the platform's own compiled manifests are otherwise.
 
     It has the chunks the verifier reads and no more: a string pool, the resource map that gives
     the attribute names their framework IDs, and the elements."""
     strings = ["targetSdkVersion", "debuggable", "uses-sdk", "application", "28", "name",
-               "uses-permission", "permission", *permissions, *declared, *sdk23,
-               "uses-permission-sdk-23"]
+               "uses-permission", "permission", *permissions, *declared]
     pool_strings = b""
     offsets = []
     for text in strings:
@@ -288,18 +273,7 @@ def synthetic_compiled_manifest(
     elements = element(2, sdk_attributes)
     for index, element_name in enumerate([6] * len(permissions) + [7] * len(declared)):
         permission = 8 + index
-        text = strings[permission]
-        if text.startswith("@"):
-            # A name given as a resource reference ("@0x7f0a0001"): not a string.
-            elements += element(element_name, struct.pack(
-                "<IIIHBBI", 0xFFFFFFFF, 5, 0xFFFFFFFF, 8, 0, 0x01, int(text[1:], 16)))
-        else:
-            elements += element(element_name, struct.pack(
-                "<IIIHBBI", 0xFFFFFFFF, 5, permission, 8, 0, 0x03, permission))
-    sdk23_element = 8 + len(permissions) + len(declared) + len(sdk23)
-    for index in range(len(sdk23)):
-        permission = 8 + len(permissions) + len(declared) + index
-        elements += element(sdk23_element, struct.pack(
+        elements += element(element_name, struct.pack(
             "<IIIHBBI", 0xFFFFFFFF, 5, permission, 8, 0, 0x03, permission))
     if debuggable is not None:
         value = (0x01, 0x7F010000) if debuggable == "reference" else (
@@ -311,12 +285,12 @@ def synthetic_compiled_manifest(
 
 
 def synthetic_apk(debuggable: bool | str | None = None, permissions: tuple[str, ...] = (),
-                  declared: tuple[str, ...] = (), sdk23: tuple[str, ...] = ()) -> bytes:
+                  declared: tuple[str, ...] = ()) -> bytes:
     """An application archive whose compiled manifest is the one synthetic_compiled_manifest builds."""
     package = io.BytesIO()
     with zipfile.ZipFile(package, "w") as apk:
         apk.writestr("AndroidManifest.xml", synthetic_compiled_manifest(
-            None, debuggable=debuggable, permissions=permissions, declared=declared, sdk23=sdk23))
+            None, debuggable=debuggable, permissions=permissions, declared=declared))
     return package.getvalue()
 
 
@@ -432,305 +406,6 @@ def load_tool(path: Path):
     finally:
         sys.path.remove(str(path.parent))
     return module
-
-
-_SMS_TOOL = None
-
-
-def sms_policy_fixture(verifier: Path, variant: str | None) -> dict[str, str]:
-    """The text message service's part of the policy a target-files fixture carries: the platform's vsock
-    and property rules as the reviewed lists give them, the service's own domain, data type and rules (as
-    overlay/sepolicy/system_ext/private/kernarium_sms.te makes them), the seapp_contexts lines and the property
-    label. A variant breaks one thing, in the way the verifier's check must catch. The lists come from the
-    verifier, so that the fixture is the baseline the check accepts and the variants differ from it by one
-    defect."""
-    global _SMS_TOOL
-    if _SMS_TOOL is None:
-        _SMS_TOOL = load_tool(verifier)
-    tool = _SMS_TOOL
-    plat = ""
-    for name in sorted(tool.VSOCK_SOCKET_TYPES):
-        permissions = "create bind connect read write getattr getopt shutdown"
-        if name not in tool.VSOCK_TYPES_WITHOUT_LISTEN:
-            permissions += " listen accept"
-        # adbd has its compatibility type of the platform version, which the verifier counts as adbd.
-        plat += f"(allow {name}{'_202604' if name == 'adbd' else ''} self (vsock_socket ({permissions})))\n"
-    for setter in sorted(tool.ADB_LISTEN_ADDRS_SETTERS):
-        plat += f"(allow {setter} system_prop (property_service (set)))\n"
-    # The platform's own rule for dumpstate, the vsock instance of its getattr rule for every socket class:
-    # over the attribute domain it reaches the service's sockets, and every Android 17 platform policy has it.
-    plat += "(allow dumpstate domain (vsock_socket (getattr)))\n"
-    # What the platform gives the application domains through groups of them: each group is the application
-    # domains but the isolated, sandboxed and ephemeral ones, as the compiler writes the platform's rules.
-    # The service is an application domain, so it inherits them, and they are accepted; a variant takes one
-    # ordinary application domain out of a group, or puts the same rule in the system_ext policy.
-    gap = {
-        "inherited-find-without-untrusted-app": ("base_typeattr_275", "untrusted_app"),
-        "inherited-find-without-platform-app": ("base_typeattr_275", "platform_app"),
-        "inherited-find-without-priv-app": ("base_typeattr_275", "priv_app"),
-        "inherited-find-without-system-app": ("base_typeattr_275", "system_app"),
-        "inherited-file-without-priv-app": ("base_typeattr_280", "priv_app"),
-        "inherited-vsock-without-platform-app": ("base_typeattr_285", "platform_app"),
-    }.get(variant or "", (None, None))
-    inherited = {
-        "base_typeattr_275": "(allow base_typeattr_275 keystore_service (service_manager (find)))\n",
-        "base_typeattr_280": "(allow base_typeattr_280 system_app_data_file (file (read write getattr map)))\n",
-        "base_typeattr_285": "(allow base_typeattr_285 virtualizationservice (vsock_socket (read write getattr)))\n",
-    }
-    # A group that lists the four ordinary application domains by name, with the service: the control for a
-    # variant that lists a type of a version suffix in place of one of them.
-    stand_in = "priv_app_299999" if variant == "inherited-find-with-a-lookalike" else "priv_app"
-    plat += (f"(typeattributeset base_typeattr_290 (kernarium_sms untrusted_app platform_app {stand_in} system_app))\n"
-             "(allow base_typeattr_290 window_service (service_manager (find)))\n")
-    for attribute, rule in inherited.items():
-        left_out = " ".join(["isolated_app", "ephemeral_app", "sdk_sandbox_34", "sdk_sandbox_audit", "sdk_sandbox_next"]
-                            + ([gap[1]] if gap[0] == attribute else []))
-        plat += f"(typeattributeset {attribute} (and (appdomain ) (not ({left_out} ))))\n{rule}"
-    ext = (
-        "(type kernarium_sms)\n(type kernarium_sms_data_file)\n"
-        "(typeattributeset domain (kernarium_sms))\n"
-        "(typeattributeset data_file_type (kernarium_sms_data_file))\n"
-        "(typeattributeset core_data_file_type (kernarium_sms_data_file))\n"
-        "(typeattributeset app_data_file_type (kernarium_sms_data_file))\n"
-        "(allow kernarium_sms kernarium_sms_data_file (dir (create getattr open read search write add_name remove_name "
-        "rename reparent rmdir setattr lock)))\n"
-        "(allow kernarium_sms kernarium_sms_data_file (file (create getattr open read write append rename setattr "
-        "unlink lock map)))\n"
-        "(allow kernarium_sms activity_service (service_manager (find)))\n"
-        "(allow kernarium_sms package_service (service_manager (find)))\n"
-        "(allow kernarium_sms role_service (service_manager (find)))\n"
-        "(allow kernarium_sms self (vsock_socket (create bind listen accept read write shutdown getattr getopt)))\n"
-        # Its own type named as the target is its own socket, as self is.
-        "(allow kernarium_sms kernarium_sms (vsock_socket (getattr)))\n"
-        "(allow installd app_data_file_type (dir (create getattr open read search write)))\n"
-        "(allow installd app_data_file_type (file (create getattr open read write unlink)))\n"
-    )
-    if variant != "no-vsock-attribute":
-        ext += "(typeattributeset unconstrained_vsock_violators (kernarium_sms))\n"
-    if variant != "no-core-domain":
-        ext += "(typeattributeset coredomain (kernarium_sms))\n"
-    if variant != "no-app-domain":
-        ext += "(typeattributeset appdomain (kernarium_sms))\n"
-    seapp_plat = (
-        "user=system seinfo=platform domain=system_app type=system_app_data_file\n"
-        "user=_app seinfo=platform domain=platform_app type=app_data_file levelFrom=user\n"
-        "isSystemServer=true domain=system_server_app\n"
-    )
-    seapp_ext = (
-        "" if variant == "no-seapp-line" else
-        "user=system seinfo=platform name=android.kernarium.sms domain=kernarium_sms type=kernarium_sms_data_file\n"
-    )
-    property_context = "" if variant == "no-property-label" else (
-        "service.adb.listen_addrs  u:object_r:system_prop:s0 exact string\n")
-    # What each variant adds: one defect.
-    if variant == "listener-through-attribute":
-        ext += ("(typeattributeset base_typeattr_77 (untrusted_app))\n"
-                "(allow base_typeattr_77 self (vsock_socket (create bind listen accept)))\n")
-    elif variant == "creator-by-name":
-        plat += "(allow hal_audio_default self (vsock_socket (create bind connect)))\n"
-    elif variant == "listener-without-the-service":
-        ext = ext.replace("(allow kernarium_sms self (vsock_socket (create bind listen accept read write shutdown "
-                          "getattr getopt)))\n", "")
-    elif variant == "sockets-through-domain":
-        ext += "(allow domain kernarium_sms (vsock_socket (read write)))\n"
-    elif variant == "dumpstate-reads":
-        plat = plat.replace("(allow dumpstate domain (vsock_socket (getattr)))",
-                            "(allow dumpstate domain (vsock_socket (getattr read)))")
-    elif variant == "another-domain-getattr":
-        plat += "(allow system_server domain (vsock_socket (getattr)))\n"
-    elif variant == "dumpstate-getattr-over-a-smaller-group":
-        plat = plat.replace("(allow dumpstate domain (vsock_socket (getattr)))",
-                            "(allow dumpstate coredomain (vsock_socket (getattr)))")
-    elif variant == "dumpstate-lookalike-source":
-        plat = plat.replace("(allow dumpstate domain (vsock_socket (getattr)))",
-                            "(allow dumpstate_299999 domain (vsock_socket (getattr)))")
-    elif variant == "dumpstate-lookalike-target":
-        plat = plat.replace("(allow dumpstate domain (vsock_socket (getattr)))",
-                            "(typeattributeset domain_299999 (kernarium_sms))\n"
-                            "(allow dumpstate domain_299999 (vsock_socket (getattr)))")
-    elif variant == "dumpstate-getattr-of-ours":
-        ext += "(allow dumpstate kernarium_sms (vsock_socket (getattr)))\n"
-    elif variant == "dumpstate-getattr-repeated-outside-the-platform":
-        ext += "(allow dumpstate domain (vsock_socket (getattr)))\n"
-    elif variant == "outbound-to-a-group-with-the-service":
-        ext += ("(typeattributeset base_typeattr_95 (kernarium_sms virtualizationservice))\n"
-                "(allow kernarium_sms base_typeattr_95 (vsock_socket (getattr)))\n")
-    elif variant == "inherited-find-service-only":
-        plat += "(allow kernarium_sms credstore_service (service_manager (find)))\n"
-    elif variant == "inherited-find-split-over-two-rules":
-        plat += ("(typeattributeset base_typeattr_276 (kernarium_sms untrusted_app platform_app))\n"
-                 "(typeattributeset base_typeattr_277 (kernarium_sms priv_app system_app))\n"
-                 "(allow base_typeattr_276 credstore_service (service_manager (find)))\n"
-                 "(allow base_typeattr_277 credstore_service (service_manager (find)))\n")
-    elif variant in ("inherited-find-in-system-ext", "inherited-file-in-system-ext", "inherited-vsock-in-system-ext"):
-        ext += inherited[{"find": "base_typeattr_275", "file": "base_typeattr_280",
-                          "vsock": "base_typeattr_285"}[variant.split("-")[1]]]
-    elif variant == "service-on-another-sockets":
-        ext += "(allow kernarium_sms virtualizationservice (vsock_socket (read write)))\n"
-    elif variant == "data-through-app-data-file-type":
-        ext += "(allow untrusted_app app_data_file_type (file (read write open create)))\n"
-    elif variant == "data-by-another-domain":
-        ext += "(allow hal_audio_default kernarium_sms_data_file (file (getattr)))\n"
-    elif variant == "property-through-attribute":
-        plat += ("(typeattributeset base_typeattr_88 (shell))\n"
-                 "(allow base_typeattr_88 system_prop (property_service (set)))\n")
-    elif variant == "property-by-another-domain":
-        plat += "(allow vendor_init system_prop (property_service (set)))\n"
-    elif variant == "extra-service":
-        ext += "(allow kernarium_sms window_service (service_manager (find)))\n"
-    elif variant == "system-app-data":
-        ext += "(allow kernarium_sms system_app_data_file (file (read)))\n"
-    elif variant == "settings-in-the-domain":
-        seapp_ext += "user=system seinfo=platform name=com.android.settings domain=kernarium_sms type=kernarium_sms_data_file\n"
-    return {"plat": plat, "ext": ext, "seapp_plat": seapp_plat, "seapp_ext": seapp_ext,
-            "property_context": property_context}
-
-
-_ORIENTATION_PROBE = None
-ICONS_APK_ENTRY = "SYSTEM_EXT/app/KernariumIcons/KernariumIcons.apk"
-ICONS_PERMISSION = "android.permission.ACCESS_CONTENT_PROVIDERS_EXTERNALLY"
-# android.R.attr ids of the icon renderer's manifest attributes (the framework's attribute table gives them), which the
-# compiled binary manifest carries beside the names.
-ICONS_ATTRIBUTE_IDS = {
-    "authorities": 0x01010018, "permission": 0x01010006, "isolatedProcess": 0x010103A9, "directBootAware": 0x01010505,
-    "allowBackup": 0x01010280, "usesNonSdkApi": 0x0101058E, "persistent": 0x0101000D, "grantUriPermissions": 0x0101001B,
-    "sharedUserId": 0x0101000B, "enabled": 0x0101000E, "readPermission": 0x01010007,
-}
-# The platform's seapp_contexts lines the icon renderer's two processes meet (a subset, in the platform's order).
-ICONS_SEAPP_PLAT = (
-    "user=_isolated domain=isolated_app levelFrom=user\n"
-    "user=_isolated isIsolatedComputeApp=true domain=isolated_compute_app levelFrom=user\n"
-    "user=_app seinfo=platform domain=platform_app_36 type=app_data_file levelFrom=user\n"
-    "user=_app isPrivApp=true domain=priv_app_36 type=privapp_data_file levelFrom=user\n"
-    "user=_app minTargetSdkVersion=37 domain=untrusted_app type=app_data_file levelFrom=all\n"
-    "user=_app minTargetSdkVersion=34 domain=untrusted_app_34 type=app_data_file levelFrom=all\n"
-    "user=_app minTargetSdkVersion=30 domain=untrusted_app_30 type=app_data_file levelFrom=all\n"
-    "user=_app minTargetSdkVersion=29 domain=untrusted_app_29 type=app_data_file levelFrom=all\n"
-    "user=_app domain=untrusted_app_25 type=app_data_file levelFrom=user\n"
-    "user=_app minTargetSdkVersion=28 fromRunAs=true domain=runas_app levelFrom=all\n"
-)
-
-
-def icons_fixture(verifier: Path, variant: str | None) -> dict:
-    """The icon renderer's part of a target-files fixture: its package with a compiled manifest, its line of the
-    package signing table and the seapp_contexts lines its processes meet. A variant breaks one thing, in the way
-    the verifier's check must catch: the baseline is the application as overlay/app_icons builds it."""
-    global _ORIENTATION_PROBE
-    if _ORIENTATION_PROBE is None:
-        path = verifier.parents[3] / "tests" / "integration" / "android" / "orientation_probe_apk.py"
-        spec = importlib.util.spec_from_file_location("orientation_probe_apk", path)
-        _ORIENTATION_PROBE = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = _ORIENTATION_PROBE  # its dataclasses look their module up by name
-        spec.loader.exec_module(_ORIENTATION_PROBE)
-    binary_xml = _ORIENTATION_PROBE
-    element = binary_xml.Element
-    reference = binary_xml.Reference
-    manifest = {"package": "com.kernarium.icons", "versionCode": 1}
-    sdk = {"minSdkVersion": 36, "targetSdkVersion": 37}
-    application = {"label": "Andarium icons", "allowBackup": False, "directBootAware": True, "usesNonSdkApi": True}
-    provider = {"name": ".IconProvider", "authorities": "com.kernarium.icons", "exported": True,
-                "permission": ICONS_PERMISSION, "directBootAware": True}
-    service = {"name": ".IconRenderService", "exported": False, "isolatedProcess": True,
-               "directBootAware": True}
-    top, inside, providers = [], [], [provider]
-    entries: dict[str, bytes | None] = {}
-    certificate = "build/make/target/product/security/testkey.x509.pem"
-    partition = "system_ext"
-    apkcerts = True
-    seapp_plat, seapp_ext = ICONS_SEAPP_PLAT, ""
-    edits = {
-        "package-changed": lambda: manifest.update(package="com.kernarium.other"),
-        "shared-user": lambda: manifest.update(sharedUserId="android.uid.system"),
-        "asks-a-permission": lambda: top.append(element("uses-permission", (("name", "android.permission.INTERNET"),))),
-        "asks-a-permission-from-sdk-m": lambda: top.append(
-            element("uses-permission-sdk-m", (("name", "android.permission.VIBRATE"),))),
-        "asks-a-permission-from-sdk-23": lambda: top.append(
-            element("uses-permission-sdk-23", (("name", "android.permission.VIBRATE"),))),
-        "provider-enabled-by-reference": lambda: provider.update(enabled=reference(0x7F050001)),
-        "provider-read-permission-by-reference": lambda: provider.update(readPermission=reference(0x7F050002)),
-        "provider-class-changed": lambda: provider.update(name="com.kernarium.icons.BackupIconProvider"),
-        "provider-class-of-another-package": lambda: provider.update(name="com.example.IconProvider"),
-        "service-class-changed": lambda: service.update(name="com.kernarium.icons.IconRenderServiceTwo"),
-        "service-app-zygote": lambda: service.update(useAppZygote=True),
-        "has-an-activity": lambda: inside.append(element("activity", (("name", "com.kernarium.icons.Main"),))),
-        "has-a-receiver": lambda: inside.append(element("receiver", (("name", "com.kernarium.icons.Boot"),))),
-        "has-a-filter": lambda: inside.append(element("service", (("name", "com.kernarium.icons.Other"),), (
-            element("intent-filter", (), (element("action", (("name", "x"),)),)),))),
-        "second-provider": lambda: providers.append(dict(provider, name="com.kernarium.icons.Other", authorities="x")),
-        "provider-not-exported": lambda: provider.update(exported=False),
-        "provider-open": lambda: provider.pop("permission"),
-        "provider-other-permission": lambda: provider.update(permission="android.permission.INTERACT_ACROSS_USERS"),
-        "provider-grants-uris": lambda: provider.update(grantUriPermissions=True),
-        "provider-disabled": lambda: provider.update(enabled=False),
-        "provider-other-authority": lambda: provider.update(authorities="com.kernarium.icon"),
-        "provider-not-direct-boot-aware": lambda: provider.pop("directBootAware"),
-        "service-not-isolated": lambda: service.update(isolatedProcess=False),
-        "service-exported": lambda: service.update(exported=True),
-        "service-guarded": lambda: service.update(permission=ICONS_PERMISSION),
-        "service-not-direct-boot-aware": lambda: service.pop("directBootAware"),
-        "application-allows-backup": lambda: application.update(allowBackup=True),
-        "application-not-direct-boot-aware": lambda: application.pop("directBootAware"),
-        "application-closed-to-hidden-apis": lambda: application.pop("usesNonSdkApi"),
-        "application-persistent": lambda: application.update(persistent=True),
-        "no-target-sdk": lambda: sdk.pop("targetSdkVersion"),
-    }
-    if variant in edits:
-        edits[variant]()
-    elif variant == "privileged-copy":
-        entries["SYSTEM_EXT/priv-app/KernariumIcons/KernariumIcons.apk"] = synthetic_apk(debuggable=False)
-    elif variant == "missing":
-        entries[ICONS_APK_ENTRY] = None
-    elif variant == "not-an-apk":
-        entries[ICONS_APK_ENTRY] = b"not a package"
-    elif variant == "platform-key":
-        certificate = "build/make/target/product/security/platform.x509.pem"
-    elif variant == "platform-key-in-the-tree":
-        certificate = "vendor/lineage/build/target/product/security/media.x509.pem"
-    elif variant == "other-partition":
-        partition = "system"
-    elif variant == "no-signing-line":
-        apkcerts = "other"
-    elif variant == "no-signing-table":
-        apkcerts = False
-    elif variant == "seapp-by-name":
-        seapp_ext = "user=_app name=com.kernarium.icons domain=untrusted_app type=app_data_file levelFrom=all\n"
-    elif variant == "seapp-by-prefix":
-        seapp_ext = "user=_app seinfo=default name=com.kernarium.* domain=kernarium_icons type=app_data_file levelFrom=all\n"
-    elif variant == "seapp-app-domain-changed":
-        seapp_plat = seapp_plat.replace("minTargetSdkVersion=37 domain=untrusted_app ", "minTargetSdkVersion=37 domain=platform_app ")
-    elif variant == "seapp-privileged-domain":
-        seapp_plat = seapp_plat.replace("minTargetSdkVersion=37 domain=untrusted_app ", "minTargetSdkVersion=37 domain=priv_app ")
-    elif variant == "seapp-isolated-changed":
-        seapp_plat = seapp_plat.replace("user=_isolated domain=isolated_app ", "user=_isolated domain=untrusted_app ")
-    elif variant == "seapp-isolated-for-another-seinfo":
-        seapp_plat = seapp_plat.replace("user=_isolated domain=isolated_app levelFrom=user\n",
-                                        "user=_isolated seinfo=platform domain=isolated_app levelFrom=user\n")
-    elif variant == "seapp-isolated-for-a-newer-target":
-        seapp_plat = seapp_plat.replace("user=_isolated domain=isolated_app levelFrom=user\n",
-                                        "user=_isolated minTargetSdkVersion=38 domain=isolated_app levelFrom=user\n")
-    elif variant == "seapp-no-isolated":
-        seapp_plat = seapp_plat.replace("user=_isolated domain=isolated_app levelFrom=user\n", "")
-    elif variant is not None:
-        fail(f"icons_fixture does not know the variant {variant}")
-    ids = dict(binary_xml.ATTRIBUTES)
-    ids.update(ICONS_ATTRIBUTE_IDS)
-    components = [
-        element("provider", tuple(item.items())) for item in providers
-    ] + [element("service", tuple(service.items()))] + inside
-    tree = element("manifest", tuple(manifest.items()), (
-        element("uses-sdk", tuple(sdk.items())), *top, element("application", tuple(application.items()), tuple(components))))
-    if ICONS_APK_ENTRY not in entries:
-        package = io.BytesIO()
-        with zipfile.ZipFile(package, "w") as apk:
-            apk.writestr("AndroidManifest.xml", binary_xml.encode_manifest(tree, ids))
-        entries[ICONS_APK_ENTRY] = package.getvalue()
-    name = "KernariumIcons.apk" if apkcerts != "other" else "Other.apk"
-    table = None if apkcerts is False else (
-        f'name="{name}" certificate="{certificate}" private_key="{certificate.replace(".x509.pem", ".pk8")}" '
-        f'partition="{partition}"\n'
-        'name="Other.apk" certificate="build/make/target/product/security/platform.x509.pem" '
-        'private_key="build/make/target/product/security/platform.pk8" partition="system"\n')
-    return {"entries": entries, "apkcerts": table, "seapp_plat": seapp_plat, "seapp_ext": seapp_ext}
 
 
 def tracked_fstab(android_root: Path) -> str:
@@ -1134,69 +809,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 fail(f"the overlay manifest reader reads {found} for {expected}")
     if tool.manifest_element_attributes(synthetic_compiled_manifest(None), "overlay") is not None:
         fail("the overlay manifest reader finds an <overlay> element in a manifest without one")
-    # The icon renderer's check reads every element of a compiled manifest and asks the seapp_contexts which domain the
-    # platform gives the application's two processes.
-    with zipfile.ZipFile(io.BytesIO(icons_fixture(verifier, None)["entries"][ICONS_APK_ENTRY])) as package:
-        icons_elements = tool.manifest_elements(package.read("AndroidManifest.xml"))
-    if [name for name, _ in icons_elements] != ["manifest", "uses-sdk", "application", "provider", "service"]:
-        fail(f"the manifest reader finds the elements {[name for name, _ in icons_elements]}")
-    icons_attributes = dict(icons_elements)
-    if (icons_attributes["manifest"].get("package") != "com.kernarium.icons"
-            or icons_attributes["uses-sdk"].get("targetSdkVersion") != 37
-            or icons_attributes["application"].get("usesNonSdkApi") is not True
-            or icons_attributes["application"].get("allowBackup") is not False
-            or icons_attributes["provider"].get("permission") != ICONS_PERMISSION
-            or icons_attributes["service"].get("isolatedProcess") is not True):
-        fail(f"the manifest reader reads {icons_attributes}")
-    try:
-        tool.manifest_elements(b"not a manifest")
-        fail("the manifest reader takes a file that is not compiled XML")
-    except ValueError:
-        pass
-    seapp = tool.parse_seapp_contexts(ICONS_SEAPP_PLAT)
-    for target, expected in ((38, "untrusted_app"), (37, "untrusted_app"), (36, "untrusted_app_34"), (34, "untrusted_app_34"),
-                             (33, "untrusted_app_30"), (30, "untrusted_app_30"), (29, "untrusted_app_29"), (28, "untrusted_app_25")):
-        found = tool.seapp_app_domain(seapp, "default", "com.kernarium.icons", target)
-        if found != expected:
-            fail(f"the seapp_contexts lookup gives an application of target SDK {target} the domain {found}, not {expected}")
-    if tool.seapp_app_domain(seapp, "platform", "com.kernarium.icons", 37) != "platform_app_36":
-        fail("the seapp_contexts lookup does not follow the seinfo")
-    named = seapp + tool.parse_seapp_contexts(
-        "user=_app name=com.kernarium.icons domain=named type=app_data_file\n"
-        "user=_app name=com.vendor.* domain=prefixed type=app_data_file\n")
-    for package_name, expected in (("com.kernarium.icons", "named"), ("com.kernarium.other", "untrusted_app"),
-                                   ("com.vendor.app", "prefixed"), ("com.vendorx", "untrusted_app")):
-        found = tool.seapp_app_domain(named, "default", package_name, 37)
-        if found != expected:
-            fail(f"the seapp_contexts lookup gives {package_name} the domain {found}, not {expected}")
-    if tool.seapp_app_domain(tool.parse_seapp_contexts("user=_app isPrivApp=true domain=priv_app\n"
-                                                       "user=_app isEphemeralApp=true domain=ephemeral_app\n"
-                                                       "user=_app fromRunAs=true domain=runas_app\n"
-                                                       "user=system domain=system_app\n"), "default", "x.y", 37) is not None:
-        fail("the seapp_contexts lookup takes a line for privileged, ephemeral, run-as or system-user processes")
-    if tool.seapp_isolated_domain(seapp, "default", "com.kernarium.icons", 37) != "isolated_app":
-        fail("the seapp_contexts lookup does not give an isolated service isolated_app")
-    if tool.seapp_isolated_domain(tool.parse_seapp_contexts("user=_isolated isIsolatedComputeApp=true domain=isolated_compute_app\n"),
-                                  "default", "x.y", 37) is not None or tool.seapp_isolated_domain([], "default", "x.y", 37) is not None:
-        fail("the seapp_contexts lookup takes a line for a shared isolated process, or invents one")
-    if tool.seapp_isolated_domain(seapp + tool.parse_seapp_contexts("user=_isolated name=x.y domain=special\n"),
-                                  "default", "x.y", 37) != "special":
-        fail("the seapp_contexts lookup does not prefer a line by name")
-    for lines, seinfo, target, expected in (
-            ("user=_isolated seinfo=platform domain=isolated_platform\n", "default", 37, None),
-            ("user=_isolated seinfo=platform domain=isolated_platform\n", "platform", 37, "isolated_platform"),
-            ("user=_isolated minTargetSdkVersion=38 domain=newer\n", "default", 37, None),
-            ("user=_isolated maxTargetSdkVersion=36 domain=older\n", "default", 37, None),
-            ("user=_isolated seinfo=platform domain=by_info\nuser=_isolated domain=plain\n", "default", 37, "plain"),
-            ("user=_isolated domain=plain\nuser=_isolated seinfo=default domain=by_info\n", "default", 37, "by_info")):
-        found = tool.seapp_isolated_domain(tool.parse_seapp_contexts(lines), seinfo, "x.y", target)
-        if found != expected:
-            fail(f"the seapp_contexts lookup gives an isolated process of seinfo {seinfo} and target SDK {target} "
-                 f"{found!r} for {lines!r}, not {expected!r}")
-    for package_name, name, expected in (("a.b", ".C", "a.b.C"), ("a.b", "C", "a.b.C"), ("a.b", "x.y.C", "x.y.C"),
-                                         ("a.b", "", None), ("a.b", None, None), ("a.b", 5, None)):
-        if tool.manifest_component_class(package_name, name) != expected:
-            fail(f"the manifest's component class for {name!r} in {package_name} is not {expected!r}")
     release_manifest = synthetic_compiled_manifest(None, debuggable=False)
     release_apk = synthetic_apk(debuggable=False)
     preopt_apks = sorted(tool.REQUIRED_PREOPT_APKS)
@@ -1206,7 +818,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         and entry != pinner_overlay_entry
         and entry != wifi_overlay_entry  # written with its own resources
         and entry != tool.CAMERA_APP  # written with its own resources
-        and entry != tool.ICONS_APK  # written with its own manifest
     )
     arm_preopt_apks = sorted(tool.REQUIRED_ARM_PREOPT_APKS)
     uml_fstab = tracked_fstab(verifier.parents[1])
@@ -1536,7 +1147,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_net_library: bool = False,
                           net_policy_variant: str | None = None,
                           gamepad_policy_variant: str | None = None,
-                          sms_policy_variant: str | None = None,
                           wifi_network_variant: str | None = None,
                           wifi_hal_variant: str | None = None,
                           wifi_dirs_variant: str | None = None,
@@ -1558,7 +1168,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           adb_prop_unreadable_by_vendor_init: bool = False,
                           lineage_policy: str | None = None,
                           missing_mediaserver_audit: bool = False,
-                          missing_shell_density_audit: bool = False,
                           missing_virtio_console: bool = False,
                           unsupported_hvc: bool = False,
                           missing_mesa_gles: bool = False,
@@ -1594,15 +1203,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           navigation_variant: str | None = None,
                           launcher_variant: str | None = None,
                           easter_egg_variant: str | None = None,
-                          accessibility_variant: str | None = None,
                           network_time_variant: str | None = None,
                           flip_variant: str | None = None,
                           reclaim_variant: str | None = None,
                           time_zone_variant: str | None = None,
                           keyboard_default_variant: str | None = None,
                           oldswitch_variant: str | None = None,
-                          appshell_variant: str | None = None,
-                          icons_variant: str | None = None,
                           wallpaper_variant: str | None = None,
                           cas_hal_variant: str | None = None,
                           adbd_variant: str | None = None,
@@ -2335,35 +1941,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     archive.writestr("SYSTEM_EXT/framework/kernarium_oldapp.jar", b"not a jar")
                 elif oldswitch_variant != "missing-jar":
                     archive.writestr("SYSTEM_EXT/framework/kernarium_oldapp.jar", oldapp_jar.getvalue())
-                # The launcher-application shell command of Add to Home Screen: the tracked wrapper script, and
-                # a jar whose code holds the command's class.
-                apps_wrapper = (verifier.parents[1] / "overlay/app_shortcuts/kernarium_apps").read_text()
-                for variant, (old, new) in {
-                    "wrapper-no-classpath": ("export CLASSPATH=$base/framework/kernarium_apps.jar\n", ""),
-                    "wrapper-wrong-jar": ("framework/kernarium_apps.jar", "framework/other.jar"),
-                    "wrapper-wrong-class": ("com.kernarium.apps.Main", "com.kernarium.apps.Other"),
-                    "wrapper-no-exec": ("exec app_process", "app_process"),
-                }.items():
-                    if appshell_variant == variant:
-                        if old not in apps_wrapper:
-                            fail(f"the launcher-application wrapper lacks '{old}' for the {variant} variant")
-                        apps_wrapper = apps_wrapper.replace(old, new)
-                if appshell_variant != "missing-wrapper":
-                    archive.writestr("SYSTEM_EXT/bin/kernarium_apps", apps_wrapper)
-                apps_jar = io.BytesIO()
-                with zipfile.ZipFile(apps_jar, "w") as jar:
-                    jar.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
-                    if appshell_variant != "jar-stripped":
-                        jar.writestr(
-                            "classes.dex",
-                            b"dex\n035\0"
-                            + (b"Lcom/kernarium/apps/Other;" if appshell_variant == "jar-without-class"
-                               else b"Lcom/kernarium/apps/Main;"),
-                        )
-                if appshell_variant == "jar-not-zip":
-                    archive.writestr("SYSTEM_EXT/framework/kernarium_apps.jar", b"not a jar")
-                elif appshell_variant != "missing-jar":
-                    archive.writestr("SYSTEM_EXT/framework/kernarium_apps.jar", apps_jar.getvalue())
                 # The device configuration of the host's keyboard and mouse: the tracked files.
                 for name, destination in input_device_files.items():
                     archive.writestr(destination, (verifier.parents[1] / "overlay/input" / name).read_text())
@@ -2395,10 +1972,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "u:object_r:kernarium_keyboard_default_exec:s0\n"
                     ),
                 )
-                sms_policy = sms_policy_fixture(verifier, sms_policy_variant)
-                icons = icons_fixture(verifier, icons_variant)
-                archive.writestr("SYSTEM/etc/selinux/plat_seapp_contexts", sms_policy["seapp_plat"] + icons["seapp_plat"])
-                archive.writestr("SYSTEM_EXT/etc/selinux/system_ext_seapp_contexts", sms_policy["seapp_ext"] + icons["seapp_ext"])
                 # Platform, vendor and system_ext policy as the builder emits them: the
                 # platform's core domains, a vendor-owned property that only
                 # vendor_init sets, and the system-owned property adbd reports its host in.
@@ -2451,7 +2024,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     + "))\n"
                     + ("(typepermissive su)\n"
                        if build_variant != "user" or user_permissive_su else "")
-                    + sms_policy["plat"]
                     + "; padding to the size of a real platform policy\n" * (
                         (17 << 20 if oversize_platform_policy else 3_441_569) // 48
                     ),
@@ -2469,7 +2041,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "debug.  u:object_r:debug_prop:s0\n"
                     "ro.hardware.  u:object_r:vendor_default_prop:s0\n"
                     "ro.hardware.audio.primary  u:object_r:exported_default_prop:s0 exact string\n"
-                    + sms_policy["property_context"]
                     + ("ro.lmk.low  u:object_r:lmkd_config_prop:s0 exact int\n"
                        if lmkd_variant == "no-property-label" else
                        "ro.lmk.gpu_reclaim  u:object_r:lmkd_config_prop:s0 exact bool\n"),
@@ -2527,8 +2098,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 )
                 archive.writestr(
                     "SYSTEM_EXT/etc/selinux/system_ext_sepolicy.cil",
-                    sms_policy["ext"]
-                    + "(typeattributeset vendor_property_type (vendor_aware_available_prop ))\n"
+                    "(typeattributeset vendor_property_type (vendor_aware_available_prop ))\n"
                     # The report file's type (sysfs_gpu_memory.te) and what lmkd may do with it and
                     # with the directories of the virtio-gpu device that lead to it.
                     + ("" if lmkd_variant == "type-not-sysfs"
@@ -2549,11 +2119,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         ""
                         if missing_mediaserver_audit
                         else "(dontaudit mediaserver vendor_default_prop (file (read)))\n"
-                    )
-                    + (
-                        ""
-                        if missing_shell_density_audit
-                        else "(dontaudit shell qemu_sf_lcd_density_prop (file (read)))\n"
                     )
                     + (
                         "(allow fsck_untrusted self (capability (sys_admin)))\n"
@@ -2738,7 +2303,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                                 "untrusted_app_29", "untrusted_app_25", "gmscore_app", "mediaprovider_app",
                                 "platform_app", "platform_app_36", "priv_app", "priv_app_36", "isolated_app",
                                 "ephemeral_app", "system_app", "sdk_sandbox_34", "sdk_sandbox_audit",
-                                "sdk_sandbox_next", "kernarium_sms",
+                                "sdk_sandbox_next",
                             )
                         )
                         if oldswitch_variant == "per-domain-reads"
@@ -3057,12 +2622,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             archive.writestr(f"{artifact}.vdex", b"vdex")
                 for apk in plain_apks:
                     archive.writestr(apk, application_payload(apk))
-                # The icon renderer: its own manifest, and its line of the package signing table.
-                for entry, payload in icons["entries"].items():
-                    if payload is not None:
-                        archive.writestr(entry, payload)
-                if icons["apkcerts"] is not None:
-                    archive.writestr("META/apkcerts.txt", icons["apkcerts"])
                 # The overlay that releases the home app's pin: built for SDK 28, with the
                 # resource it sets in its table.
                 pinner_overlay = io.BytesIO()
@@ -3228,13 +2787,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     archive.writestr("PRODUCT/app/EasterEgg/EasterEgg.apk", release_apk)
                 elif easter_egg_variant == "wrong-directory":
                     archive.writestr("SYSTEM/app/Egg/EasterEgg.apk", release_apk)
-                # TalkBack and eSpeak NG, the image build's two APKs.
-                if accessibility_variant not in ("missing-talkback", "talkback-in-system"):
-                    archive.writestr("PRODUCT/app/TalkBack/TalkBack.apk", release_apk)
-                if accessibility_variant == "talkback-in-system":
-                    archive.writestr("SYSTEM/app/TalkBack/TalkBack.apk", release_apk)
-                if accessibility_variant != "missing-espeak":
-                    archive.writestr("PRODUCT/app/eSpeakNG/eSpeakNG.apk", release_apk)
                 if launcher_variant != "no-overlay":
                     layout_strings = [name for pair in launcher_dock for name in pair]
                     if launcher_variant == "six-application-layout":
@@ -3464,8 +3016,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr("SYSTEM/etc/gps_debug.conf", "# SUPL_HOST=supl.example\n# NTP_SERVER=ntp.example\n\n")
                 advertised_features = ["android.hardware.touchscreen",
                                        "android.hardware.sensor.accelerometer",
-                                       "android.hardware.sensor.gyroscope",
-                                       "android.hardware.telephony.messaging"]
+                                       "android.hardware.sensor.gyroscope"]
                 advertised_features.extend(
                     feature for feature in (
                         "android.hardware.touchscreen.multitouch",
@@ -4008,35 +3559,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         f"{result.returncode} {result.stdout}"
                     )
 
-        # TalkBack keeps the permissions of its other features, Bluetooth and location among them,
-        # and the guard of its unexported receivers, and an application that declares the network
-        # permission does not request it: every variant accepts both. None of the kept
-        # permissions is a network permission.
-        for variant in BUILD_VARIANTS:
-            fixture = root / f"{variant}-with-talkback-permissions-it-keeps.zip"
-            write_fixture(
-                fixture, build_variant=variant,
-                entries={"PRODUCT/app/TalkBack/TalkBack.apk": synthetic_apk(
-                    permissions=tuple(f"android.permission.{name}" for name in (
-                        "USE_FINGERPRINT", "READ_PHONE_STATE", "VIBRATE", "WAKE_LOCK",
-                        "MODIFY_AUDIO_SETTINGS", "RECORD_AUDIO", "QUERY_ALL_PACKAGES",
-                        "RECEIVE_BOOT_COMPLETED", "FOREGROUND_SERVICE", "POST_NOTIFICATIONS",
-                        "ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "BLUETOOTH",
-                        "BLUETOOTH_ADMIN", "BLUETOOTH_CONNECT", "BLUETOOTH_SCAN"))
-                    + (TALKBACK_GUARD_PERMISSION,),
-                    sdk23=("android.permission.WAKE_LOCK",),
-                    declared=("android.permission.INTERNET",))},
-            )
-            result = run_tool(
-                verifier, "--target-files", fixture,
-                "--build-variant", variant, *kernel_options,
-            )
-            if result.returncode != 0:
-                fail(
-                    f"a {variant} build with TalkBack requesting only its other permissions "
-                    f"verified wrongly: {result.returncode} {result.stdout}"
-                )
-
         # A rejection fixture is built and verified once however many tables
         # state it: the cases whose options are the same share one run, which
         # must satisfy every assertion of every case (the status and the
@@ -4316,7 +3838,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("lineage-vold-relabelto", {"lineage_policy": "vold-relabelto"}),
             ("lineage-permissive-backuptool", {"lineage_policy": "permissive-backuptool"}),
             ("missing-mediaserver-audit", {"missing_mediaserver_audit": True}),
-            ("missing-shell-density-audit", {"missing_shell_density_audit": True}),
             ("missing-virtio-console", {"missing_virtio_console": True}),
             ("unsupported-hvc", {"unsupported_hvc": True}),
             ("missing-mesa-gles", {"missing_mesa_gles": True}),
@@ -4478,9 +3999,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("launcher-overlay-with-the-six-application-layout", {"launcher_variant": "six-application-layout"}),
             ("launcher-layout-names-an-application-the-image-lacks", {"launcher_variant": "no-documentsui"}),
             ("missing-easter-egg", {"easter_egg_variant": "missing"}),
-            ("missing-talkback", {"accessibility_variant": "missing-talkback"}),
-            ("missing-espeak-ng", {"accessibility_variant": "missing-espeak"}),
-            ("talkback-in-the-system-partition", {"accessibility_variant": "talkback-in-system"}),
             ("easter-egg-in-a-directory-of-another-name", {"easter_egg_variant": "wrong-directory"}),
             ("ntp-server-left", {"network_time_variant": "ntp-server"}),
             ("ntp-server-left-in-a-qualified-definition",
@@ -4606,52 +4124,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("application-that-starts-trade-in-mode",
              {"entries": {"SYSTEM/priv-app/Fixture/Fixture.apk":
                           synthetic_apk(permissions=("android.permission.ENTER_TRADE_IN_MODE",))}}),
-            ("talkback-that-requests-the-network",
-             {"entries": {"PRODUCT/app/TalkBack/TalkBack.apk":
-                          synthetic_apk(permissions=("android.permission.RECORD_AUDIO",
-                                                     "android.permission.INTERNET",
-                                                     "android.permission.ACCESS_NETWORK_STATE"))}}),
-            ("talkback-that-requests-a-google-service-permission",
-             {"entries": {"PRODUCT/app/TalkBack/TalkBack.apk":
-                          synthetic_apk(permissions=(
-                              "com.google.android.providers.gsf.permission.READ_GSERVICES",
-                              "com.google.android.apps.aicore.service.BIND_SERVICE"))}}),
-            ("espeak-that-requests-the-local-network",
-             {"entries": {"PRODUCT/app/eSpeakNG/eSpeakNG.apk":
-                          synthetic_apk(permissions=("android.permission.ACCESS_LOCAL_NETWORK",))}}),
-            ("talkback-that-requests-a-play-store-permission",
-             {"entries": {"PRODUCT/app/TalkBack/TalkBack.apk":
-                          synthetic_apk(permissions=("com.android.vending.BILLING",))}}),
-            ("talkback-that-requests-the-network-as-an-sdk-23-permission",
-             {"entries": {"PRODUCT/app/TalkBack/TalkBack.apk":
-                          synthetic_apk(sdk23=("android.permission.INTERNET",))}}),
-            ("talkback-that-requests-the-old-guard-permission",
-             {"entries": {"PRODUCT/app/TalkBack/TalkBack.apk":
-                          synthetic_apk(permissions=(OLD_GUARD_PERMISSION,))}}),
-            ("espeak-that-requests-the-old-guard-permission",
-             {"entries": {"PRODUCT/app/eSpeakNG/eSpeakNG.apk":
-                          synthetic_apk(permissions=(OLD_GUARD_PERMISSION,))}}),
-            ("talkback-that-requests-the-network-settings-permission",
-             {"entries": {"PRODUCT/app/TalkBack/TalkBack.apk":
-                          synthetic_apk(permissions=("android.permission.NETWORK_SETTINGS",))}}),
-            ("talkback-that-requests-a-network-permission-no-name-rule-catches",
-             {"entries": {"PRODUCT/app/TalkBack/TalkBack.apk": synthetic_apk(permissions=(
-                 "android.permission.MANAGE_IPSEC_TUNNELS", "android.permission.ACCESS_LOWPAN_STATE",
-                 "android.permission.PACKET_KEEPALIVE_OFFLOAD",
-                 "android.permission.REQUEST_COMPANION_USE_DATA_IN_BACKGROUND"))}}),
-            ("talkback-that-requests-an-ordinary-permission-outside-its-list",
-             {"entries": {"PRODUCT/app/TalkBack/TalkBack.apk":
-                          synthetic_apk(permissions=("android.permission.VIBRATE",
-                                                     "android.permission.CAMERA"))}}),
-            ("espeak-that-requests-a-permission-at-all",
-             {"entries": {"PRODUCT/app/eSpeakNG/eSpeakNG.apk":
-                          synthetic_apk(permissions=("android.permission.VIBRATE",))}}),
-            ("espeak-that-requests-the-guard-permission-of-talkbacks-package",
-             {"entries": {"PRODUCT/app/eSpeakNG/eSpeakNG.apk":
-                          synthetic_apk(permissions=(TALKBACK_GUARD_PERMISSION,))}}),
-            ("talkback-that-requests-a-permission-by-resource-reference",
-             {"entries": {"PRODUCT/app/TalkBack/TalkBack.apk":
-                          synthetic_apk(permissions=("@0x7f0a0001",))}}),
             ("device-diagnostics-in-the-image",
              {"extra_entry": "SYSTEM/priv-app/DeviceDiagnostics/DeviceDiagnostics.apk"}),
             ("application-without-a-manifest",
@@ -4685,14 +4157,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("video-codec-list-lacks-hevc-decoder",
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
                  hardware_decoders={"c2.v4l2.avc.decoder": "video/avc"})}}),
-            ("video-codec-list-lacks-vp9-decoder",
-             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
-                 hardware_decoders={name: kind for name, kind in tool.VIDEO_DECODER_CODECS.items()
-                                    if name != "c2.v4l2.vp9.decoder"})}}),
             ("video-unapproved-hardware-decoder",
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
                  hardware_decoders={**tool.VIDEO_DECODER_CODECS,
-                                    "c2.v4l2.vp8.decoder": "video/x-vnd.on2.vp8"})}}),
+                                    "c2.v4l2.vp9.decoder": "video/x-vnd.on2.vp9"})}}),
             ("video-decoder-without-adaptive-playback",
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
                  decoder_features=("dynamic-color-aspects",))}}),
@@ -4742,15 +4210,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("video-unapproved-decoder-property",
              {"video_properties": {
                  **good_video_properties,
-                 "ro.vendor.v4l2_codec2.decoder.supported.av1": "true"}}),
+                 "ro.vendor.v4l2_codec2.decoder.supported.vp9": "true"}}),
             ("missing-video-decoder-property",
              {"video_properties": {
                  name: value for name, value in good_video_properties.items()
                  if not name.endswith("decoder.supported.h264")}}),
-            ("missing-video-vp9-decoder-property",
-             {"video_properties": {
-                 name: value for name, value in good_video_properties.items()
-                 if not name.endswith("decoder.supported.vp9")}}),
             ("video-decode-concurrency-property",
              {"video_properties": {
                  **good_video_properties,
@@ -5082,8 +4546,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "makes the domain backuptool permissive"),
             ("missing-mediaserver-audit-cause", {"missing_mediaserver_audit": True},
              "does not silence the denial of mediaserver reading vendor_default_prop"),
-            ("missing-shell-density-audit-cause", {"missing_shell_density_audit": True},
-             "does not silence the denial of the shell domain reading qemu_sf_lcd_density_prop"),
             ("adb-prop-unreadable-by-vendor-init-cause",
              {"adb_prop_unreadable_by_vendor_init": True},
              "names sys.kernarium.adb.host_connected, labelled kernarium_adb_host_prop, "
@@ -5363,82 +4825,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           synthetic_apk(permissions=("android.permission.ENTER_TRADE_IN_MODE",))}},
              "SYSTEM/priv-app/Fixture/Fixture.apk requests android.permission.ENTER_TRADE_IN_MODE: "
              "trade-in mode would start on an unprovisioned first boot"),
-            ("talkback-that-requests-the-network-cause",
-             {"entries": {"PRODUCT/app/TalkBack/TalkBack.apk":
-                          synthetic_apk(permissions=("android.permission.RECORD_AUDIO",
-                                                     "android.permission.INTERNET",
-                                                     "android.permission.ACCESS_NETWORK_STATE"))}},
-             "PRODUCT/app/TalkBack/TalkBack.apk requests android.permission.ACCESS_NETWORK_STATE, "
-             "android.permission.INTERNET: TalkBack and eSpeak NG hold no network access"),
-            ("talkback-that-requests-a-google-service-permission-cause",
-             {"entries": {"PRODUCT/app/TalkBack/TalkBack.apk":
-                          synthetic_apk(permissions=(
-                              "com.google.android.providers.gsf.permission.READ_GSERVICES",
-                              "com.google.android.apps.aicore.service.BIND_SERVICE"))}},
-             "PRODUCT/app/TalkBack/TalkBack.apk requests "
-             "com.google.android.apps.aicore.service.BIND_SERVICE, "
-             "com.google.android.providers.gsf.permission.READ_GSERVICES: TalkBack and eSpeak NG"),
-            ("espeak-that-requests-the-local-network-cause",
-             {"entries": {"PRODUCT/app/eSpeakNG/eSpeakNG.apk":
-                          synthetic_apk(permissions=("android.permission.ACCESS_LOCAL_NETWORK",))}},
-             "PRODUCT/app/eSpeakNG/eSpeakNG.apk requests android.permission.ACCESS_LOCAL_NETWORK: "
-             "TalkBack and eSpeak NG hold no network access and no Google service permission"),
-            ("talkback-that-requests-a-play-store-permission-cause",
-             {"entries": {"PRODUCT/app/TalkBack/TalkBack.apk":
-                          synthetic_apk(permissions=("com.android.vending.BILLING",))}},
-             "PRODUCT/app/TalkBack/TalkBack.apk requests com.android.vending.BILLING: "
-             "TalkBack and eSpeak NG hold no network access"),
-            ("talkback-that-requests-the-network-as-an-sdk-23-permission-cause",
-             {"entries": {"PRODUCT/app/TalkBack/TalkBack.apk":
-                          synthetic_apk(sdk23=("android.permission.INTERNET",))}},
-             "PRODUCT/app/TalkBack/TalkBack.apk requests android.permission.INTERNET: "
-             "TalkBack and eSpeak NG hold no network access"),
-            ("talkback-that-requests-the-old-guard-permission-cause",
-             {"entries": {"PRODUCT/app/TalkBack/TalkBack.apk":
-                          synthetic_apk(permissions=(OLD_GUARD_PERMISSION,))}},
-             f"PRODUCT/app/TalkBack/TalkBack.apk requests {OLD_GUARD_PERMISSION}: "
-             "TalkBack and eSpeak NG hold no network access"),
-            ("espeak-that-requests-the-old-guard-permission-cause",
-             {"entries": {"PRODUCT/app/eSpeakNG/eSpeakNG.apk":
-                          synthetic_apk(permissions=(OLD_GUARD_PERMISSION,))}},
-             f"PRODUCT/app/eSpeakNG/eSpeakNG.apk requests {OLD_GUARD_PERMISSION}: "
-             "TalkBack and eSpeak NG hold no network access"),
-            ("talkback-that-requests-the-network-settings-permission-cause",
-             {"entries": {"PRODUCT/app/TalkBack/TalkBack.apk":
-                          synthetic_apk(permissions=("android.permission.NETWORK_SETTINGS",))}},
-             "PRODUCT/app/TalkBack/TalkBack.apk requests android.permission.NETWORK_SETTINGS: "
-             "TalkBack and eSpeak NG hold no network access"),
-            ("talkback-that-requests-a-network-permission-no-name-rule-catches-cause",
-             {"entries": {"PRODUCT/app/TalkBack/TalkBack.apk": synthetic_apk(permissions=(
-                 "android.permission.MANAGE_IPSEC_TUNNELS", "android.permission.ACCESS_LOWPAN_STATE",
-                 "android.permission.PACKET_KEEPALIVE_OFFLOAD",
-                 "android.permission.REQUEST_COMPANION_USE_DATA_IN_BACKGROUND"))}},
-             "PRODUCT/app/TalkBack/TalkBack.apk requests android.permission.ACCESS_LOWPAN_STATE, "
-             "android.permission.MANAGE_IPSEC_TUNNELS, android.permission.PACKET_KEEPALIVE_OFFLOAD, "
-             "android.permission.REQUEST_COMPANION_USE_DATA_IN_BACKGROUND: "
-             "TalkBack and eSpeak NG hold no network access"),
-            ("talkback-that-requests-an-ordinary-permission-outside-its-list-cause",
-             {"entries": {"PRODUCT/app/TalkBack/TalkBack.apk":
-                          synthetic_apk(permissions=("android.permission.VIBRATE",
-                                                     "android.permission.CAMERA"))}},
-             "PRODUCT/app/TalkBack/TalkBack.apk requests android.permission.CAMERA: "
-             "TalkBack and eSpeak NG hold no network access and no Google service permission, "
-             "and request only the permissions the build is known to need"),
-            ("espeak-that-requests-a-permission-at-all-cause",
-             {"entries": {"PRODUCT/app/eSpeakNG/eSpeakNG.apk":
-                          synthetic_apk(permissions=("android.permission.VIBRATE",))}},
-             "PRODUCT/app/eSpeakNG/eSpeakNG.apk requests android.permission.VIBRATE: "
-             "TalkBack and eSpeak NG hold no network access"),
-            ("espeak-that-requests-the-guard-permission-of-talkbacks-package-cause",
-             {"entries": {"PRODUCT/app/eSpeakNG/eSpeakNG.apk":
-                          synthetic_apk(permissions=(TALKBACK_GUARD_PERMISSION,))}},
-             f"PRODUCT/app/eSpeakNG/eSpeakNG.apk requests {TALKBACK_GUARD_PERMISSION}: "
-             "TalkBack and eSpeak NG hold no network access"),
-            ("talkback-that-requests-a-permission-by-resource-reference-cause",
-             {"entries": {"PRODUCT/app/TalkBack/TalkBack.apk":
-                          synthetic_apk(permissions=("@0x7f0a0001",))}},
-             "PRODUCT/app/TalkBack/TalkBack.apk requests @resource 0x7f0a0001: "
-             "TalkBack and eSpeak NG hold no network access"),
             ("device-diagnostics-in-the-image-cause",
              {"extra_entry": "SYSTEM/priv-app/DeviceDiagnostics/DeviceDiagnostics.apk"},
              "unneeded built-in application payload is forbidden: "
@@ -5507,12 +4893,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("launcher-overlay-with-the-six-application-layout-cause", {"launcher_variant": "six-application-layout"},
              "res/xml/default_workspace_4x5.xml names com.android.calculator2.Calculator: the home screen "
              "holds only the dock"),
-            ("missing-talkback-cause", {"accessibility_variant": "missing-talkback"},
-             "TalkBack.apk is missing from the image: the image build supplies TalkBack"),
-            ("missing-espeak-ng-cause", {"accessibility_variant": "missing-espeak"},
-             "eSpeakNG.apk is missing from the image: the image build supplies TalkBack"),
-            ("talkback-in-the-system-partition-cause", {"accessibility_variant": "talkback-in-system"},
-             "TalkBack.apk is missing from the image: the image build supplies TalkBack"),
             ("missing-easter-egg-cause", {"easter_egg_variant": "missing"},
              "EasterEgg.apk is missing from the image: the Android version row opens the logo screen"),
             ("easter-egg-in-a-directory-of-another-name-cause", {"easter_egg_variant": "wrong-directory"},
@@ -5897,15 +5277,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
                  hardware_decoders={"c2.v4l2.avc.decoder": "video/avc"})}},
              "must name the hardware decoders"),
-            ("video-codec-list-lacks-vp9-decoder-cause",
-             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
-                 hardware_decoders={name: kind for name, kind in tool.VIDEO_DECODER_CODECS.items()
-                                    if name != "c2.v4l2.vp9.decoder"})}},
-             "must name the hardware decoders"),
             ("video-unapproved-hardware-decoder-cause",
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
                  hardware_decoders={**tool.VIDEO_DECODER_CODECS,
-                                    "c2.v4l2.vp8.decoder": "video/x-vnd.on2.vp8"})}},
+                                    "c2.v4l2.vp9.decoder": "video/x-vnd.on2.vp9"})}},
              "must name the hardware decoders"),
             ("video-decoder-without-adaptive-playback-cause",
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
@@ -5914,13 +5289,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("video-unapproved-decoder-property-cause",
              {"video_properties": {
                  **good_video_properties,
-                 "ro.vendor.v4l2_codec2.decoder.supported.av1": "true"}},
+                 "ro.vendor.v4l2_codec2.decoder.supported.vp9": "true"}},
              "outside the approved set"),
-            ("missing-video-vp9-decoder-property-cause",
-             {"video_properties": {
-                 name: value for name, value in good_video_properties.items()
-                 if not name.endswith("decoder.supported.vp9")}},
-             "lacks ro.vendor.v4l2_codec2.decoder.supported.vp9"),
             ("missing-video-decoder-property-cause",
              {"video_properties": {
                  name: value for name, value in good_video_properties.items()
@@ -6216,94 +5586,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "does not give the gamepad relay vsock sockets to listen on"),
             ("gamepad-policy-without-the-vsock-attribute", {"gamepad_policy_variant": "no-attribute"},
              "does not classify the gamepad relay as an unconstrained vsock user"),
-            # The text message service: only the host can cause a delivery. Each row is one defect
-            # of the policy that the baseline fixture does not have.
-            ("sms-listener-through-an-attribute", {"sms_policy_variant": "listener-through-attribute"},
-             "vsock socket are not the reviewed ones \\(unreviewed: \\['untrusted_app"),
-            ("sms-vsock-creator-by-name", {"sms_policy_variant": "creator-by-name"},
-             "unreviewed: \\['hal_audio_default'\\]"),
-            ("sms-service-without-its-vsock-rule", {"sms_policy_variant": "listener-without-the-service"},
-             "reviewed and missing: \\['kernarium_sms'\\]"),
-            ("sms-sockets-through-domain", {"sms_policy_variant": "sockets-through-domain"},
-             "hold \\['read', 'write'\\] on a vsock socket of kernarium_sms"),
-            # The platform's grant of getattr to dumpstate over domain is accepted by the baseline; each of
-            # these differs from it by one thing and is refused.
-            ("sms-dumpstate-reads", {"sms_policy_variant": "dumpstate-reads"},
-             "\\['dumpstate'\\] hold \\['getattr', 'read'\\] on a vsock socket of kernarium_sms"),
-            ("sms-another-domain-getattr", {"sms_policy_variant": "another-domain-getattr"},
-             "\\['system_server'\\] hold \\['getattr'\\] on a vsock socket of kernarium_sms"),
-            ("sms-dumpstate-getattr-over-a-smaller-group",
-             {"sms_policy_variant": "dumpstate-getattr-over-a-smaller-group"},
-             "\\['dumpstate'\\] hold \\['getattr'\\] on a vsock socket of kernarium_sms"),
-            # A type or attribute whose name differs from dumpstate or domain by a platform version suffix is
-            # another type: the rule must be the platform's own, token for token.
-            ("sms-dumpstate-lookalike-source", {"sms_policy_variant": "dumpstate-lookalike-source"},
-             "\\['dumpstate'\\] hold \\['getattr'\\] on a vsock socket of kernarium_sms"),
-            ("sms-dumpstate-lookalike-target", {"sms_policy_variant": "dumpstate-lookalike-target"},
-             "\\['dumpstate'\\] hold \\['getattr'\\] on a vsock socket of kernarium_sms"),
-            ("sms-dumpstate-getattr-of-ours", {"sms_policy_variant": "dumpstate-getattr-of-ours"},
-             "\\['dumpstate'\\] hold \\['getattr'\\] on a vsock socket of kernarium_sms"),
-            ("sms-dumpstate-getattr-repeated-outside-the-platform",
-             {"sms_policy_variant": "dumpstate-getattr-repeated-outside-the-platform"},
-             "\\['dumpstate'\\] hold \\['getattr'\\] on a vsock socket of kernarium_sms"),
-            # What the service inherits: the baseline has the platform's rules over groups of the application
-            # domains, which hold all four ordinary ones. A group without one of them, rules that split
-            # the four, the service alone, and the same rule in the system_ext policy are the service's own.
-            ("sms-find-service-only-in-the-platform-policy", {"sms_policy_variant": "inherited-find-service-only"},
-             "may find \\['credstore_service'\\]"),
-            ("sms-find-split-over-two-rules", {"sms_policy_variant": "inherited-find-split-over-two-rules"},
-             "may find \\['credstore_service'\\]"),
-            # A type that differs from one of the four by a platform version suffix is another type.
-            ("sms-find-group-with-a-lookalike-of-priv-app", {"sms_policy_variant": "inherited-find-with-a-lookalike"},
-             "may find \\['window_service'\\]"),
-            ("sms-find-group-without-untrusted-app", {"sms_policy_variant": "inherited-find-without-untrusted-app"},
-             "may find \\['keystore_service'\\]"),
-            ("sms-find-group-without-platform-app", {"sms_policy_variant": "inherited-find-without-platform-app"},
-             "may find \\['keystore_service'\\]"),
-            ("sms-find-group-without-priv-app", {"sms_policy_variant": "inherited-find-without-priv-app"},
-             "may find \\['keystore_service'\\]"),
-            ("sms-find-group-without-system-app", {"sms_policy_variant": "inherited-find-without-system-app"},
-             "may find \\['keystore_service'\\]"),
-            ("sms-file-group-without-priv-app", {"sms_policy_variant": "inherited-file-without-priv-app"},
-             "has a rule on system_app_data_file"),
-            ("sms-vsock-group-without-platform-app", {"sms_policy_variant": "inherited-vsock-without-platform-app"},
-             "kernarium_sms holds .* on the vsock sockets of"),
-            ("sms-find-in-system-ext", {"sms_policy_variant": "inherited-find-in-system-ext"},
-             "may find \\['keystore_service'\\]"),
-            ("sms-file-in-system-ext", {"sms_policy_variant": "inherited-file-in-system-ext"},
-             "has a rule on system_app_data_file"),
-            ("sms-vsock-in-system-ext", {"sms_policy_variant": "inherited-vsock-in-system-ext"},
-             "kernarium_sms holds .* on the vsock sockets of"),
-            # A target group that holds the service and another type is the other type's socket too.
-            ("sms-vsock-outbound-to-a-group-with-the-service",
-             {"sms_policy_variant": "outbound-to-a-group-with-the-service"},
-             "kernarium_sms holds .* on the vsock sockets of \\['virtualizationservice'\\]"),
-            ("sms-service-on-other-sockets", {"sms_policy_variant": "service-on-another-sockets"},
-             "kernarium_sms holds .* on the vsock sockets of"),
-            ("sms-data-through-app-data-file-type", {"sms_policy_variant": "data-through-app-data-file-type"},
-             "may .* kernarium_sms_data_file"),
-            ("sms-data-by-another-domain", {"sms_policy_variant": "data-by-another-domain"},
-             "hold rights on kernarium_sms_data_file"),
-            ("sms-property-through-attribute", {"sms_policy_variant": "property-through-attribute"},
-             "may set service.adb.listen_addrs"),
-            ("sms-property-by-another-domain", {"sms_policy_variant": "property-by-another-domain"},
-             "\\['vendor_init'\\] may set service.adb.listen_addrs"),
-            ("sms-property-without-a-label", {"sms_policy_variant": "no-property-label"},
-             "do not label service.adb.listen_addrs"),
-            ("sms-service-finds-another-service", {"sms_policy_variant": "extra-service"},
-             "may find \\['window_service'\\]"),
-            ("sms-service-on-system-app-data", {"sms_policy_variant": "system-app-data"},
-             "has a rule on system_app_data_file"),
-            ("sms-service-not-a-core-domain", {"sms_policy_variant": "no-core-domain"},
-             "kernarium_sms is not in coredomain"),
-            ("sms-service-not-an-app-domain", {"sms_policy_variant": "no-app-domain"},
-             "kernarium_sms is not in appdomain"),
-            ("sms-service-without-the-vsock-attribute", {"sms_policy_variant": "no-vsock-attribute"},
-             "kernarium_sms is not in unconstrained_vsock_violators"),
-            ("sms-package-selects-no-domain", {"sms_policy_variant": "no-seapp-line"},
-             "seapp_contexts do not select kernarium_sms"),
-            ("sms-domain-for-another-package", {"sms_policy_variant": "settings-in-the-domain"},
-             "seapp_contexts select .* for com.android.settings"),
             ("missing-location-feature", {"missing_location_feature": "android.hardware.location"},
              "feature is not declared: android.hardware.location(?!\\.gps)"),
             ("missing-gps-feature", {"missing_location_feature": "android.hardware.location.gps"},
@@ -6314,9 +5596,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("keymouse-probe-left-in-the-image", {"entries": {
                 "SYSTEM/app/AndariumKeyMouseProbe/AndariumKeyMouseProbe.apk": synthetic_apk(debuggable=False)}},
              "unneeded built-in application payload is forbidden: SYSTEM/app/AndariumKeyMouseProbe"),
-            ("sms-probe-left-in-the-image", {"entries": {
-                "SYSTEM/app/AndariumSmsProbe/AndariumSmsProbe.apk": synthetic_apk(debuggable=False)}},
-             "unneeded built-in application payload is forbidden: SYSTEM/app/AndariumSmsProbe"),
             ("bugreport-keychord", {"init_variant": "bugreport-keychord"},
              "starts bugreport on a keychord \\('keycodes 30 48'\\)"),
             ("keyboard-default-missing-script", {"keyboard_default_variant": "missing-script"},
@@ -6387,99 +5666,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "kernarium_oldapp.jar is not a readable jar"),
             ("oldapp-jar-without-class", {"oldswitch_variant": "jar-without-class"},
              "holds code without the class com.kernarium.oldapp.Main"),
-            ("apps-command-missing-wrapper", {"appshell_variant": "missing-wrapper"},
-             "required entries are missing: .*SYSTEM_EXT/bin/kernarium_apps"),
-            ("apps-command-missing-jar", {"appshell_variant": "missing-jar"},
-             "required entries are missing: .*SYSTEM_EXT/framework/kernarium_apps.jar"),
-            ("apps-command-wrapper-no-classpath", {"appshell_variant": "wrapper-no-classpath"},
-             "kernarium_apps does not contain 'CLASSPATH=.base/framework/kernarium_apps.jar'"),
-            ("apps-command-wrapper-wrong-jar", {"appshell_variant": "wrapper-wrong-jar"},
-             "kernarium_apps does not contain 'CLASSPATH=.base/framework/kernarium_apps.jar'"),
-            ("apps-command-wrapper-wrong-class", {"appshell_variant": "wrapper-wrong-class"},
-             "kernarium_apps does not contain 'exec app_process .base/bin com.kernarium.apps.Main'"),
-            ("apps-command-wrapper-no-exec", {"appshell_variant": "wrapper-no-exec"},
-             "kernarium_apps does not contain 'exec app_process"),
-            ("apps-command-jar-not-zip", {"appshell_variant": "jar-not-zip"},
-             "kernarium_apps.jar is not a readable jar"),
-            ("apps-command-jar-without-class", {"appshell_variant": "jar-without-class"},
-             "holds code without the class com.kernarium.apps.Main"),
-            ("apps-command-jar-stripped", {"appshell_variant": "jar-stripped"},
-             "kernarium_apps.jar has no classes.dex and no preoptimized odex and vdex"),
-            ("icons-app-missing", {"icons_variant": "missing"},
-             "required entries are missing: .*SYSTEM_EXT/app/KernariumIcons/KernariumIcons.apk"),
-            ("icons-app-privileged-copy", {"icons_variant": "privileged-copy"},
-             "priv-app/KernariumIcons/KernariumIcons.apk: the icon renderer is an ordinary application of app/"),
-            ("icons-app-not-an-apk", {"icons_variant": "not-an-apk"}, "KernariumIcons.apk has no readable manifest"),
-            ("icons-app-package-changed", {"icons_variant": "package-changed"},
-             "is the package com.kernarium.other, not com.kernarium.icons"),
-            ("icons-app-shared-user", {"icons_variant": "shared-user"}, "the manifest sets sharedUserId"),
-            ("icons-app-asks-a-permission", {"icons_variant": "asks-a-permission"},
-             "has uses-permission: the renderer asks for no permission"),
-            ("icons-app-asks-a-permission-from-sdk-m", {"icons_variant": "asks-a-permission-from-sdk-m"},
-             "has uses-permission-sdk-m: the renderer asks for no permission"),
-            ("icons-app-asks-a-permission-from-sdk-23", {"icons_variant": "asks-a-permission-from-sdk-23"},
-             "has uses-permission-sdk-23: the renderer asks for no permission"),
-            ("icons-provider-enabled-by-reference", {"icons_variant": "provider-enabled-by-reference"},
-             "the provider sets enabled"),
-            ("icons-provider-read-permission-by-reference", {"icons_variant": "provider-read-permission-by-reference"},
-             "the provider sets readPermission"),
-            ("icons-provider-class-changed", {"icons_variant": "provider-class-changed"},
-             "the provider is com.kernarium.icons.BackupIconProvider, not com.kernarium.icons.IconProvider"),
-            ("icons-provider-class-of-another-package", {"icons_variant": "provider-class-of-another-package"},
-             "the provider is com.example.IconProvider, not com.kernarium.icons.IconProvider"),
-            ("icons-service-class-changed", {"icons_variant": "service-class-changed"},
-             "the service is com.kernarium.icons.IconRenderServiceTwo, not com.kernarium.icons.IconRenderService"),
-            ("icons-service-app-zygote", {"icons_variant": "service-app-zygote"}, "the service sets useAppZygote"),
-            ("icons-seapp-isolated-for-another-seinfo", {"icons_variant": "seapp-isolated-for-another-seinfo"},
-             "put the icon renderer's isolated service in None, not isolated_app"),
-            ("icons-seapp-isolated-for-a-newer-target", {"icons_variant": "seapp-isolated-for-a-newer-target"},
-             "put the icon renderer's isolated service in None, not isolated_app"),
-            ("icons-app-has-an-activity", {"icons_variant": "has-an-activity"}, "has activity: the renderer asks for no permission"),
-            ("icons-app-has-a-receiver", {"icons_variant": "has-a-receiver"}, "has receiver: the renderer asks for no permission"),
-            ("icons-app-has-a-filter", {"icons_variant": "has-a-filter"}, "has intent-filter: the renderer asks for no permission"),
-            ("icons-app-second-provider", {"icons_variant": "second-provider"}, "has 2 provider elements, not 1"),
-            ("icons-provider-not-exported", {"icons_variant": "provider-not-exported"}, "the provider's exported is False, not True"),
-            ("icons-provider-open", {"icons_variant": "provider-open"},
-             "the provider's permission is None, not 'android.permission.ACCESS_CONTENT_PROVIDERS_EXTERNALLY'"),
-            ("icons-provider-other-permission", {"icons_variant": "provider-other-permission"},
-             "the provider's permission is 'android.permission.INTERACT_ACROSS_USERS'"),
-            ("icons-provider-grants-uris", {"icons_variant": "provider-grants-uris"}, "the provider sets grantUriPermissions"),
-            ("icons-provider-disabled", {"icons_variant": "provider-disabled"}, "the provider sets enabled"),
-            ("icons-provider-other-authority", {"icons_variant": "provider-other-authority"},
-             "the provider's authorities is 'com.kernarium.icon'"),
-            ("icons-provider-not-direct-boot-aware", {"icons_variant": "provider-not-direct-boot-aware"},
-             "the provider's directBootAware is None, not True"),
-            ("icons-service-not-isolated", {"icons_variant": "service-not-isolated"}, "the service's isolatedProcess is False, not True"),
-            ("icons-service-exported", {"icons_variant": "service-exported"}, "the service's exported is True, not False"),
-            ("icons-service-guarded", {"icons_variant": "service-guarded"}, "the service sets permission"),
-            ("icons-service-not-direct-boot-aware", {"icons_variant": "service-not-direct-boot-aware"},
-             "the service's directBootAware is None, not True"),
-            ("icons-application-allows-backup", {"icons_variant": "application-allows-backup"},
-             "the application's allowBackup is not false"),
-            ("icons-application-not-direct-boot-aware", {"icons_variant": "application-not-direct-boot-aware"},
-             "the application's directBootAware is not true"),
-            ("icons-application-closed-to-hidden-apis", {"icons_variant": "application-closed-to-hidden-apis"},
-             "the application's usesNonSdkApi is not true"),
-            ("icons-application-persistent", {"icons_variant": "application-persistent"}, "the application sets persistent"),
-            ("icons-app-no-target-sdk", {"icons_variant": "no-target-sdk"}, "has no integer targetSdkVersion"),
-            ("icons-app-platform-key", {"icons_variant": "platform-key"},
-             "KernariumIcons.apk is signed with 'build/make/target/product/security/platform.x509.pem'"),
-            ("icons-app-media-key", {"icons_variant": "platform-key-in-the-tree"}, "KernariumIcons.apk is signed with"),
-            ("icons-app-other-partition", {"icons_variant": "other-partition"}, "on 'system': the renderer takes the default key"),
-            ("icons-app-no-signing-line", {"icons_variant": "no-signing-line"}, "apkcerts.txt has no line for KernariumIcons.apk"),
-            ("icons-app-no-signing-table", {"icons_variant": "no-signing-table"}, "META/apkcerts.txt is missing"),
-            ("icons-seapp-by-name", {"icons_variant": "seapp-by-name"},
-             "seapp_contexts select untrusted_app for the icon renderer by name \\(com.kernarium.icons\\)"),
-            ("icons-seapp-by-prefix", {"icons_variant": "seapp-by-prefix"},
-             "seapp_contexts select kernarium_icons for the icon renderer by name \\(com.kernarium.\\*\\)"),
-            ("icons-seapp-app-domain-changed", {"icons_variant": "seapp-app-domain-changed"},
-             "put the icon renderer's provider in platform_app, not an untrusted_app domain"),
-            ("icons-seapp-privileged-domain", {"icons_variant": "seapp-privileged-domain"},
-             "put the icon renderer's provider in priv_app, not an untrusted_app domain"),
-            ("icons-seapp-isolated-changed", {"icons_variant": "seapp-isolated-changed"},
-             "put the icon renderer's isolated service in untrusted_app, not isolated_app"),
-            ("icons-seapp-no-isolated", {"icons_variant": "seapp-no-isolated"},
-             "put the icon renderer's isolated service in None, not isolated_app"),
             ("oldapp-missing-context", {"oldswitch_variant": "missing-context"},
              "is labelled default_prop, not kernarium_oldapp_prop"),
             ("oldapp-exact-context", {"oldswitch_variant": "exact-context"},
@@ -8644,421 +7830,6 @@ def verify_camerax_denylist_assertion(android_root: Path) -> None:
                  f"{denylist!r}, not {'0' if accepted else '1'}: {result.stdout}{result.stderr}")
 
 
-def snapshot_tree(root: Path) -> dict[str, tuple[str, object]]:
-    """Every entry under root: a file's bytes, a symlink's target, a FIFO or a directory.
-
-    Symlinked directories are listed, never entered."""
-    state: dict[str, tuple[str, object]] = {}
-    for directory, names, files in os.walk(root):
-        for name in names + files:
-            path = Path(directory) / name
-            key = path.relative_to(root).as_posix()
-            mode = path.lstat().st_mode
-            if stat.S_ISLNK(mode):
-                state[key] = ("link", os.readlink(path))
-            elif stat.S_ISREG(mode):
-                state[key] = ("file", path.read_bytes())
-            elif stat.S_ISFIFO(mode):
-                state[key] = ("fifo", None)
-            else:
-                state[key] = ("directory", None)
-    return state
-
-
-def verify_stale_build_properties(android_root: Path) -> None:
-    """build-aosp.sh removes the property files an earlier build number left in the output directory
-    and refuses a build that leaves one.
-
-    The step is build/build-number-properties.sh, which the script sources. It runs here against a
-    stand-in output tree, with stand-ins for GNU timeout (absent on a macOS host) and for find, which
-    refuses to run outside the timeout so that no listing is unbounded. The same tree is checked
-    against two build numbers, so that a comparison fixed to one of them fails."""
-    build = android_root / "build"
-    product_path = "target/product/andarium"
-    numbers = ("26", "27")
-
-    def prop(*lines: str) -> bytes:
-        return ("ro.build.id=CP2A\n" + "".join(f"{line}\n" for line in lines) + "ro.build.version.sdk=37\n").encode()
-
-    def entry(relative: str, content: bytes, stale_26: bool, stale_27: bool) -> tuple[str, bytes, dict[str, bool]]:
-        return relative, content, {"26": stale_26, "27": stale_27}
-
-    key = "ro.build.version.incremental"
-    odm_key = "ro.odm.build.version.incremental"
-    vendor_key = "ro.vendor.build.version.incremental"
-    product_key = "ro.product.build.version.incremental"
-    system_ext_key = "ro.system_ext.build.version.incremental"
-    entries = [
-        # Installed property files that name another number than 26, or than 27.
-        entry(f"{product_path}/vendor/build.prop", prop(f"{vendor_key}=25"), True, True),
-        entry(f"{product_path}/system/build.prop", prop(f"{key}=25"), True, True),
-        entry(f"{product_path}/product/build.prop", prop(f"{product_key}=2"), True, True),
-        entry(f"{product_path}/system_ext/build.prop", prop(f"{system_ext_key}=260"), True, True),
-        entry(f"{product_path}/ramdisk/prop.default", prop(f"{key}=eng.builder"), True, True),
-        entry(f"{product_path}/odm dir/build.prop", prop(f"{key}=25"), True, True),
-        entry(f"{product_path}/odm/build.prop", prop(f"{odm_key}=26"), False, True),
-        entry(f"{product_path}/vendor/etc/prop.default", prop(f"{key}=26"), False, True),
-        entry(f"{product_path}/etc7/build.prop", prop(f"{key}=27"), True, False),
-        # How a property is read: split at the first "=", blanks and a carriage return trimmed, the
-        # whole value compared as a string.
-        entry(f"{product_path}/etc-blanks/build.prop", prop(f"{odm_key} = 25"), True, True),
-        entry(f"{product_path}/etc-second-equals/build.prop", prop(f"{odm_key}=26=old"), True, True),
-        entry(f"{product_path}/etc-crlf/build.prop", f"{odm_key}=26\r\nro.x=1\r\n".encode(), False, True),
-        entry(f"{product_path}/etc-trailing/build.prop",
-              prop(f"{odm_key}=26   ", f"  {vendor_key}  =  26  "), False, True),
-        entry(f"{product_path}/etc-leading-zero/build.prop", prop(f"{key}=026"), True, True),
-        # A stale key between current ones, and the other way round.
-        entry(f"{product_path}/etc-middle/build.prop",
-              prop(f"{key}=26", f"{product_key}=25", f"{system_ext_key}=26"), True, True),
-        entry(f"{product_path}/etc-first/build.prop",
-              prop(f"{key}=25", f"{product_key}=26", f"{system_ext_key}=26"), True, True),
-        # No incremental property, or one of another name, names no number.
-        entry(f"{product_path}/vendor/etc/build.prop",
-              b"ro.vendor.build.id=CP2A\nro.vendor.build.version.incrementalx=25\nro.incremental.enable=1\n",
-              False, False),
-        # A file of another name is not a property file, and obj/ is the target-files rule's.
-        entry(f"{product_path}/vendor/build.prop.bak", prop(f"{key}=25"), False, False),
-        entry(f"{product_path}/obj/PACKAGING/target_files_intermediates/x/SYSTEM/build.prop",
-              prop(f"{key}=25"), False, False),
-        entry(f"{product_path}/obj/ETC/vendor_intermediates/build.prop", prop(f"{key}=25"), False, False),
-        # Soong's intermediates are searched before the build only.
-        entry("soong/.intermediates/build/soong/system-build.prop/android_common/build.prop",
-              prop(f"{key}=25"), True, True),
-        entry("soong/.intermediates/build/soong/ramdisk-prop.default/android_common/prop.default",
-              prop(f"{key}=25"), True, True),
-        entry("soong/.intermediates/build/soong/a dir\nwith newline/build.prop", prop(f"{key}=25"), True, True),
-        entry("soong/.intermediates/build/soong/odm-build.prop/android_common/build.prop",
-              prop(f"{odm_key}=26"), False, True),
-        # Nothing else of the output directory is searched.
-        entry("host/linux-x86/build.prop", prop(f"{key}=25"), False, False),
-    ]
-
-    def is_installed(relative: str) -> bool:
-        return relative.startswith(f"{product_path}/") and not relative.startswith(f"{product_path}/obj/")
-
-    sibling_files = (
-        "aosp/out-other/target/product/andarium/vendor/build.prop",
-        "aosp/out-other/soong/.intermediates/x/build.prop",
-        "outside/linked/build.prop",
-    )
-
-    real_find = shutil.which("find")
-    if real_find is None:
-        fail("the host has no find")
-    shims = {
-        "timeout": '#!/bin/bash\n'
-                   'printf "%s\\n" "$*" >>"$SHIM_LOG"\n'
-                   '[[ "${1:-}" != --foreground ]] || shift\n'
-                   'if [[ "${1:-}" == -k ]]; then shift 2; fi\n'
-                   '[[ "${1:-}" =~ ^[1-9][0-9]*$ ]] || exit 125\n'
-                   'shift\n'
-                   '[[ -z "${SHIM_TIMEOUT_STATUS:-}" ]] || exit "$SHIM_TIMEOUT_STATUS"\n'
-                   '[[ -z "${SHIM_TIMEOUT_HANG:-}" ]] || exec sleep 60\n'
-                   'if [[ -n "${SHIM_TIMEOUT_AFTER:-}" ]]; then\n'
-                   '    UNDER_TIMEOUT=1 "$@"\n'
-                   '    exit "$SHIM_TIMEOUT_AFTER"\n'
-                   'fi\n'
-                   'UNDER_TIMEOUT=1 exec "$@"\n',
-        "find": '#!/bin/bash\n'
-                '[[ -n "${UNDER_TIMEOUT:-}" ]] || { echo "find ran without a timeout" >&2; exit 97; }\n'
-                'unset UNDER_TIMEOUT\n'
-                f'exec {shlex.quote(real_find)} "$@"\n',
-    }
-    failing_rm = '#!/bin/bash\n' \
-                 'for argument in "$@"; do [[ "$argument" != "$SHIM_RM_FAILS" ]] || exit 1; done\n' \
-                 'exec /bin/rm "$@"\n'
-
-    with tempfile.TemporaryDirectory(prefix="stale-build-properties-") as temporary:
-        base = Path(temporary).resolve()
-        shim_dir = base / "shims"
-        shim_dir.mkdir()
-        for name, text in shims.items():
-            (shim_dir / name).write_text(text)
-            (shim_dir / name).chmod(0o755)
-        rm_dir = base / "failing-rm"
-        rm_dir.mkdir()
-        (rm_dir / "rm").write_text(failing_rm)
-        (rm_dir / "rm").chmod(0o755)
-        log = base / "timeout.log"
-
-        def build_tree(name: str) -> tuple[Path, Path, Path]:
-            root = base / name
-            out = root / "aosp/out-user"
-            for relative, content, _ in entries:
-                path = out / relative
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(content)
-            for relative in sibling_files:
-                path = root / relative
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(prop(f"{key}=25"))
-            (out / product_path / "odm/prop.default").symlink_to(root / "outside/linked/build.prop")
-            return root, out, out / product_path
-
-        environment_base = {**os.environ, "PATH": f"{shim_dir}{os.pathsep}{os.environ['PATH']}", "SHIM_LOG": str(log)}
-
-        def command(function: str, out: object, product: object, number: str) -> list[str]:
-            return ["bash", "-c", f'set -euo pipefail\nsource "$1"\nsource "$2"\n{function} "$3" "$4" "$5"',
-                    "build-aosp.sh", str(build / "common.sh"), str(build / "build-number-properties.sh"),
-                    str(out), str(product), number]
-
-        def run(function: str, out: object, product: object, number: str = "26",
-                **environment: str) -> subprocess.CompletedProcess[str]:
-            log.write_text("")
-            return subprocess.run(command(function, out, product, number), env={**environment_base, **environment},
-                                  stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False, timeout=120)
-
-        def listings() -> list[str]:
-            lines = log.read_text().splitlines()
-            if any(not re.fullmatch(r"--foreground -k 10 1800 find \. .*", line) for line in lines):
-                fail(f"a listing is not bounded by timeout --foreground, or not run on relative patterns: {lines}")
-            if any(str(base) in line for line in lines):
-                fail(f"a listing passes an absolute path to find: {lines}")
-            return lines
-
-        def expected_stale(number: str, installed_only: bool = False) -> list[str]:
-            return [relative for relative, _, stale in entries
-                    if stale[number] and (is_installed(relative) or not installed_only)]
-
-        def named_in(result: subprocess.CompletedProcess[str]) -> list[str]:
-            return sorted(line.strip() for line in result.stderr.splitlines() if line.startswith("\t"))
-
-        def scratch_files(root: Path) -> list[str]:
-            return [name for _, names, files in os.walk(root) for name in names + files
-                    if ".build-number-properties" in name]
-
-        # Before the build, for each of two numbers on the same tree, in an output path that holds
-        # glob characters and blanks: the stale files go by their found paths and nothing else changes.
-        for directory, number in (("remove-26", "26"), ("remove-27", "27"), ("glob [x]*? dir/remove", "26")):
-            root, out, product = build_tree(directory)
-            before = snapshot_tree(root)
-            removed = expected_stale(number)
-            for relative in removed:
-                del before[f"aosp/out-user/{relative}"]
-            result = run("remove_stale_build_properties", out, product, number)
-            if result.returncode != 0:
-                fail(f"removing the property files that name another number than {number} failed: "
-                     f"{result.stdout}{result.stderr}")
-            if snapshot_tree(root) != before:
-                fail(f"for build number {number} in {directory!r}, the removal left a stale file or touched "
-                     "a current one, a file of another name, obj/, a link, another output directory "
-                     "or the outside of the product's installed tree and Soong's intermediates")
-            for relative in removed:
-                if str(out / relative) not in result.stdout:
-                    fail(f"the removal for build number {number} does not name {relative}: {result.stdout}")
-            if f"removed {len(removed)} property files that name another build number than {number}" \
-                    not in result.stdout:
-                fail(f"the removal for build number {number} does not count its files: {result.stdout}")
-            lines = listings()
-            if len(lines) != 2 or " -path ./obj -prune -o " not in lines[0] or "-prune" in lines[1]:
-                fail(f"the removal does not list the installed tree without obj/, then Soong's intermediates: {lines}")
-            again = run("remove_stale_build_properties", out, product, number)
-            if (again.returncode, again.stdout, again.stderr) != (0, "", ""):
-                fail(f"a second removal is not a no-op: {again.returncode} {again.stdout}{again.stderr}")
-
-        # The same output through a link, as a symlinked workspace is: only the search roots must be
-        # physical directories of the output.
-        root, out, product = build_tree("alias")
-        alias = root / "alias-out"
-        alias.symlink_to(out)
-        before = snapshot_tree(root)
-        for relative in expected_stale("26"):
-            del before[f"aosp/out-user/{relative}"]
-        result = run("remove_stale_build_properties", alias, alias / product_path)
-        if result.returncode != 0 or snapshot_tree(root) != before:
-            fail(f"an output directory reached through a link is not cleaned: {result.stdout}{result.stderr}")
-
-        # The same when the output's own name ends in a newline, beside a directory named without it:
-        # the physical path keeps the newline, so the step works and never enters the other directory.
-        root, out, product = build_tree("newline")
-        out.rename(out.with_name(out.name + "\n"))
-        out.mkdir()
-        alias = root / "alias-out"
-        alias.symlink_to(out.with_name(out.name + "\n"))
-        before = snapshot_tree(root)
-        for relative in expected_stale("26"):
-            del before[f"aosp/out-user\n/{relative}"]
-        result = run("remove_stale_build_properties", alias, alias / product_path)
-        if result.returncode != 0 or snapshot_tree(root) != before:
-            fail(f"an output directory whose name ends in a newline is not cleaned: {result.stdout}{result.stderr}")
-
-        # With no output directory, or one the build has not filled, it does nothing.
-        missing = base / "missing/out-user"
-        result = run("remove_stale_build_properties", missing, missing / product_path)
-        if (result.returncode, result.stdout, result.stderr) != (0, "", "") or missing.exists() or listings():
-            fail(f"an absent output directory is not left alone: {result.returncode} {result.stdout}{result.stderr}")
-        empty = base / "empty/out-user"
-        empty.mkdir(parents=True)
-        for function in ("remove_stale_build_properties", "verify_build_number_properties"):
-            result = run(function, empty, empty / product_path)
-            if (result.returncode, result.stdout, result.stderr) != (0, "", "") or any(empty.iterdir()):
-                fail(f"{function} leaves an empty output directory changed: "
-                     f"{result.returncode} {result.stdout}{result.stderr}")
-        root, out, product = build_tree("outside-product")
-        result = run("remove_stale_build_properties", out, root / "outside" / "product")
-        if result.returncode == 0 or "not inside the output directory" not in result.stderr:
-            fail(f"a product output outside the output directory is accepted: {result.stdout}{result.stderr}")
-
-        # A search root that is a link, or behind one, or not a normalized path, fails the step
-        # before any listing, for the removal and for the scan, and nothing is deleted anywhere.
-        for label, link_relative, link_target, functions in (
-            ("soong", "soong", "aosp/out-other/soong", ("remove_stale_build_properties",)),
-            ("target", "target", "aosp/out-other/target",
-             ("remove_stale_build_properties", "verify_build_number_properties")),
-            ("product", product_path, "aosp/out-other/target/product/andarium",
-             ("remove_stale_build_properties", "verify_build_number_properties")),
-        ):
-            root, out, product = build_tree(f"link-{label}")
-            shutil.rmtree(out / link_relative)
-            (out / link_relative).symlink_to(root / link_target)
-            before = snapshot_tree(root)
-            for function in functions:
-                result = run(function, out, product)
-                if result.returncode == 0 or f"is behind a symbolic link: {out / link_relative}" not in result.stderr:
-                    fail(f"{function} accepts a symlinked {label} directory, or does not name it: "
-                         f"{result.returncode} {result.stdout}{result.stderr}")
-                if snapshot_tree(root) != before or listings():
-                    fail(f"{function} listed or changed a tree whose {label} directory is a link")
-        root, out, product = build_tree("dot-dot")
-        before = snapshot_tree(root)
-        for function in ("remove_stale_build_properties", "verify_build_number_properties"):
-            result = run(function, out, f"{out}/target/product/../product/andarium")
-            if result.returncode == 0 or "not a normalized path" not in result.stderr \
-                    or snapshot_tree(root) != before or listings():
-                fail(f"{function} accepts a product path with a '..' component: {result.stdout}{result.stderr}")
-
-        # A removal that fails fails the script, naming the file, and leaves no scratch file.
-        root, out, product = build_tree("remove-fails")
-        before = snapshot_tree(root)
-        victim = out / f"{product_path}/vendor/build.prop"
-        result = run("remove_stale_build_properties", out, product,
-                     PATH=f"{rm_dir}{os.pathsep}{shim_dir}{os.pathsep}{os.environ['PATH']}",
-                     SHIM_RM_FAILS=str(victim))
-        if result.returncode == 0 or f"cannot remove the property file that names another build number: {victim}" \
-                not in result.stderr or not result.stderr.startswith("android/lineage-24/build/build-aosp.sh: "):
-            fail(f"a failed removal does not fail the script: {result.returncode} {result.stdout}{result.stderr}")
-        if not victim.exists() or scratch_files(root):
-            fail("a failed removal leaves its file removed or a scratch file behind")
-        if any(name not in before for name in snapshot_tree(root)):
-            fail("a failed removal created a file")
-
-        # A listing that fails or times out is an error, even after find ran, and removes nothing.
-        root, out, product = build_tree("listing-fails")
-        before = snapshot_tree(root)
-        for function in ("remove_stale_build_properties", "verify_build_number_properties"):
-            for variable in ("SHIM_TIMEOUT_STATUS", "SHIM_TIMEOUT_AFTER"):
-                result = run(function, out, product, **{variable: "124"})
-                if result.returncode == 0 or "cannot list the property files" not in result.stderr \
-                        or "exit status 124" not in result.stderr:
-                    fail(f"{function} accepts a listing that timed out ({variable}): "
-                         f"{result.returncode} {result.stdout}{result.stderr}")
-                if snapshot_tree(root) != before:
-                    fail(f"{function} changed the tree, or left a scratch file, after a listing that timed out "
-                         f"({variable})")
-
-        # A property file that cannot be read is an error, not a file that is current.
-        if os.geteuid() != 0:
-            root, out, product = build_tree("unreadable")
-            unreadable = out / f"{product_path}/vendor/build.prop"
-            unreadable.chmod(0)
-            try:
-                for function in ("remove_stale_build_properties", "verify_build_number_properties"):
-                    result = run(function, out, product)
-                    if result.returncode == 0 or f"cannot read the property file {unreadable}" not in result.stderr:
-                        fail(f"{function} accepts a property file it cannot read: "
-                             f"{result.returncode} {result.stdout}{result.stderr}")
-                    if scratch_files(root):
-                        fail(f"{function} leaves a scratch file behind after an unreadable property file")
-            finally:
-                unreadable.chmod(0o644)
-
-        # No fixed scratch name: a FIFO or a link at the name an earlier version used neither blocks
-        # the step nor is written through, and two runs do not share a list.
-        root, out, product = build_tree("scratch-fifo")
-        os.mkfifo(out / ".build-number-properties.list")
-        before = snapshot_tree(root)
-        for relative in expected_stale("26"):
-            del before[f"aosp/out-user/{relative}"]
-        result = run("remove_stale_build_properties", out, product)
-        if result.returncode != 0 or snapshot_tree(root) != before:
-            fail(f"a FIFO in the output directory changes the removal: {result.returncode} {result.stdout}{result.stderr}")
-        root, out, product = build_tree("scratch-link")
-        victim_file = root / "outside/victim.txt"
-        victim_file.write_text("keep\n")
-        (out / ".build-number-properties.list").symlink_to(victim_file)
-        before = snapshot_tree(root)
-        result = run("verify_build_number_properties", out, product)
-        if result.returncode == 0 or victim_file.read_text() != "keep\n" or snapshot_tree(root) != before:
-            fail(f"a link in the output directory is written through, or changes the scan: {result.stderr}")
-
-        # An interrupt during a listing ends the step and removes its scratch files.
-        root, out, product = build_tree("interrupted")
-        before = snapshot_tree(root)
-        log.write_text("")
-        process = subprocess.Popen(
-            command("remove_stale_build_properties", out, product, "26"),
-            env={**environment_base, "SHIM_TIMEOUT_HANG": "1"}, stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        try:
-            deadline = time.monotonic() + 30
-            while len(scratch_files(root)) < 2 and time.monotonic() < deadline:
-                time.sleep(0.05)
-            if len(scratch_files(root)) < 2:
-                fail("the step creates no scratch files while it lists")
-            os.killpg(process.pid, signal.SIGTERM)
-            deadline = time.monotonic() + 30
-            while scratch_files(root) and time.monotonic() < deadline:
-                time.sleep(0.05)
-            if scratch_files(root) or snapshot_tree(root) != before:
-                fail("an interrupted step leaves a scratch file behind, or changed the tree")
-        finally:
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=30)
-
-        # After the build, for each of two numbers: an installed file that names another number refuses
-        # the build, naming exactly those files, and only the installed tree is scanned.
-        for number in numbers:
-            root, out, product = build_tree(f"verify-{number}")
-            before = snapshot_tree(root)
-            result = run("verify_build_number_properties", out, product, number)
-            expected = sorted(str(out / relative) for relative in expected_stale(number, installed_only=True))
-            if result.returncode == 0 or named_in(result) != expected:
-                fail(f"the scan for build number {number} does not refuse exactly the stale installed files: "
-                     f"{result.returncode} {named_in(result)} {result.stdout}{result.stderr}")
-            if snapshot_tree(root) != before or len(listings()) != 1:
-                fail("the scan changes the tree or does not list the installed tree exactly once")
-        result = run("remove_stale_build_properties", out, product, "27")
-        if result.returncode != 0:
-            fail(f"the removal failed on the scan's tree: {result.stdout}{result.stderr}")
-        result = run("verify_build_number_properties", out, product, "27")
-        if (result.returncode, result.stdout, result.stderr) != (0, "", ""):
-            fail(f"the scan refuses a tree whose stale files were removed: {result.stdout}{result.stderr}")
-        stray = out / product_path / "system/build.prop"
-        stray.write_bytes(prop(f"{key}=26"))
-        result = run("verify_build_number_properties", out, product, "27")
-        if result.returncode == 0 or named_in(result) != [str(stray)]:
-            fail(f"the scan does not name exactly the stale file left by the build: {result.stderr}")
-
-    # build-aosp.sh sources the helper, and its steps keep their order: removal after the number is
-    # exported and before the first build, the scan after the last one, and neither without a number.
-    script = (build / "build-aosp.sh").read_text()
-    guard = 'if [[ -n "$BUILD_NUMBER_VALUE" ]]; then\n\t'
-    positions = [
-        script.find('source "$SCRIPT_DIR/build-number-properties.sh"'),
-        script.find("export BUILD_NUMBER=$BUILD_NUMBER_VALUE"),
-        script.find(guard + 'remove_stale_build_properties "$OUT_DIR_ABSOLUTE" "$PRODUCT_OUT_ABSOLUTE" '
-                    '"$BUILD_NUMBER_VALUE"\nfi\n'),
-        script.find('m -j"$JOBS" target-files-package check_target_files_vintf'),
-        script.rfind('m -j"$JOBS" target-files-package\n'),
-        script.find(guard + 'verify_build_number_properties "$OUT_DIR_ABSOLUTE" "$PRODUCT_OUT_ABSOLUTE" '
-                    '"$BUILD_NUMBER_VALUE"\nfi\n'),
-        script.find('DEXPREOPT_CONFIG="'),
-    ]
-    if -1 in positions or any(earlier >= later for earlier, later in zip(positions, positions[1:])):
-        fail(f"build-aosp.sh does not remove the stale property files before its build and scan after it: {positions}")
-
-
 def verify_network_stack_topic(android_root: Path) -> None:
     """The routed NetworkMonitor topic and the verifier agree on the Wi-Fi check.
 
@@ -9291,9 +8062,6 @@ def verify_package_assertions(android_root: Path) -> None:
         "com.google.cf.wpa_supplicant",
         "KernariumWifiOverlay",
         "KernariumPinnerOverlay",
-        "KernariumSms",
-        "messaging",
-        "TelephonyProvider",
         "SecureElement",
         "EasterEgg",
         "kernarium_net_setup",
@@ -10657,7 +9425,6 @@ def main() -> None:
     verify_network_stack_topic(android_root)
     verify_wifi_tracker_topic(android_root)
     verify_camerax_denylist_assertion(android_root)
-    verify_stale_build_properties(android_root)
     verify_media_codecs_overlay(android_root)
     verify_package_assertions(android_root)
     verify_debugging_defaults(android_root)

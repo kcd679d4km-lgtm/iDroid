@@ -139,9 +139,3 @@ patch	PM-suspend-say-whether-the-suspend-s-own-sync-returned.patch
 patch	um-say-in-a-suspend-s-reply-whether-it-synced-file-systems.patch
 patch	um-wait-for-idle-with-one-kevent-per-virtual-CPU.patch
 patch	arm64-um-map-a-vDSO-whose-entries-are-plain-system-calls.patch
-patch	um-leave-the-VMAs-a-fork-cannot-change-alone-at-its-flush.patch
-patch	um-name-the-frame-a-kernel-write-into-another-process-changed.patch
-patch	virt_wifi-keep-the-station-joined-through-a-system-suspend.patch
-patch	um-tell-the-host-of-the-pages-a-Darwin-UBD-read-wrote.patch
-patch	iov_iter-tell-the-host-of-the-page-a-bvec-copy-out-wrote.patch
-patch	um-tell-the-Darwin-host-which-code-pages-cannot-change.patch

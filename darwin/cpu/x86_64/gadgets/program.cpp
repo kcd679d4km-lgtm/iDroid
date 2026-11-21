@@ -505,10 +505,9 @@ template<bool WatchFloating, bool Checked = false>
 	std::size_t instruction_budget,
 	std::uint32_t *floating_exceptions = nullptr) noexcept
 {
-	auto *const tlb = executor.tlb_entries();
 	NativeExecutionContext context{
 		.memory = &memory,
-		.tlb_entries = tlb,
+		.tlb_entries = executor.tlb_entries(),
 		.program_begin = program.address(),
 		.program_end = program.address() + program.byte_count(),
 		.instruction_limit = std::min<std::size_t>(limit, 4096),
@@ -521,10 +520,7 @@ template<bool WatchFloating, bool Checked = false>
 		.code_changes = executor.prepared_code_changes(),
 		.code_publications = 0,
 		.code_pages = executor.code_page_registry(),
-		/* RSP's own page's entry, so a run whose stack accesses are all
-		 * [rsp + displacement] finds it from the first one on: the first
-		 * ordinary translation of that page fills this very entry. */
-		.stack_entry = tlb + native_tlb_index(cpu.registers[4]),
+		.stack_entry = executor.tlb_entries(),
 	};
 	/* RF is cleared as the next instruction starts, after the
 	 * instruction-breakpoint check it exists to suppress. It reaches the

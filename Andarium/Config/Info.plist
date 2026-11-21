@@ -43,10 +43,6 @@
 	<key>AndariumReviewID</key>
 	<string>$(REVIEW_ID)</string>
 #endif
-#ifdef TESTFLIGHT_STORE_LINK
-	<key>AndariumStoreLinkID</key>
-	<string>$(STORE_LINK_ID)</string>
-#endif
 	<key>GCSupportedGameControllers</key>
 	<array>
 		<dict>

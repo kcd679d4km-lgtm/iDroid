@@ -88,11 +88,6 @@ struct BootView: View {
             guard stopping else { return }
             Self.announce(String(localized: "Stopping\u{2026}"))
         }
-        .onChange(of: min(current, steps.count - 1)) { _, active in
-            // VoiceOver hears each step as it starts, after what it is saying.
-            guard current < steps.count else { return }
-            VoiceOver.announce(steps[active].title, queued: true)
-        }
         .task(id: kind) {
             guard frozen == nil else { return }
             if model.driver != nil {
@@ -191,11 +186,8 @@ struct BootView: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .contentTransition(.numericText())
-                    .accessibilityLabel(Self.spokenElapsed(seconds))
             }
         }
-        // What is starting and how long it has taken, read as one.
-        .accessibilityElement(children: .combine)
         .padding(.horizontal, 24)
         .frame(height: 44)
         .frame(maxWidth: 640)
@@ -209,11 +201,6 @@ struct BootView: View {
             Text(kind == .recovery ? "Recovery" : "Andarium")
                 .font(.largeTitle.weight(.bold))
                 .padding(.horizontal, 4)
-                .accessibilityAddTraits(.isHeader)
-
-            if let pending = model.androidApps.open.pending, pending.stage == .starting {
-                AppOpenBootCard(request: pending.request, dimmed: dimmed)
-            }
 
             if model.slowStart.showing {
                 slowNotice(steps: steps, current: current)
@@ -237,7 +224,6 @@ struct BootView: View {
                 } icon: {
                     Image(systemName: Self.noteSymbol(kind))
                         .foregroundStyle(Color.accentColor)
-                        .accessibilityHidden(true)
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -447,7 +433,6 @@ struct BootView: View {
             }
             .font(.title3)
             .frame(width: 24, height: 24)
-            .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(step.title)
                     .font(.body.weight(.semibold))
@@ -462,23 +447,6 @@ struct BootView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        // The step, its detail and how far it is, read as one; the mark
-        // that shows how far says it in words.
-        .accessibilityElement(children: .combine)
-        .accessibilityValue(Self.spokenState(state))
-    }
-
-    private static func spokenState(_ state: StepState) -> String {
-        switch state {
-        case .done: String(localized: "Done")
-        case .active: String(localized: "In progress")
-        case .pending: String(localized: "Waiting")
-        }
-    }
-
-    /// "1 minute 5 seconds" for the elapsed time "1:05".
-    static func spokenElapsed(_ seconds: Int) -> String {
-        Duration.seconds(max(seconds, 0)).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .wide))
     }
 
     // MARK: Content per kind
@@ -590,7 +558,7 @@ private struct EqualWidthRow: Layout {
 /// The boot screen's panels: a flat translucent fill over the dimmed
 /// display, which needs no backdrop sampling, and glass over Recovery's
 /// opaque screen.
-struct BootPanel: ViewModifier {
+private struct BootPanel: ViewModifier {
     let dimmed: Bool
     let radius: CGFloat
 
@@ -610,8 +578,6 @@ struct BootPanel: ViewModifier {
 struct ProgressBar: View {
     let value: Double
     var height: CGFloat = 8
-    /// What VoiceOver calls the bar: what is in progress.
-    var label = String(localized: "Progress")
 
     var body: some View {
         GeometryReader { geo in
@@ -625,23 +591,21 @@ struct ProgressBar: View {
         .frame(height: height)
         .animation(.snappy, value: value)
         .accessibilityElement()
-        .accessibilityLabel(label)
+        .accessibilityLabel("Progress")
         .accessibilityValue("\(Int((value * 100).rounded())) percent")
-        .accessibilityAddTraits(.updatesFrequently)
     }
 }
 
-/// The live dot on the status line. With Reduce Motion it holds still.
+/// The live dot on the status line.
 struct PulsingDot: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var dim = false
 
     var body: some View {
         Circle()
             .fill(Color.accentColor)
             .frame(width: 8, height: 8)
-            .opacity(dim && !reduceMotion ? 0.35 : 1)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: dim)
+            .opacity(dim ? 0.35 : 1)
+            .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: dim)
             .onAppear { dim = true }
             .accessibilityHidden(true)
     }

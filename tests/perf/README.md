@@ -151,11 +151,7 @@ emulator exits zero. They are not CTest registrations.
 
 A row whose required feature is `x86-64` is a `guest_x86_64_*.S` probe on
 [`x86_64_probe_harness.inc`](x86_64_probe_harness.inc). It runs in an x86-64
-guest: the `macos-x86_64` emulator with an x86-64 image as `--rootfs`. Its
-setup jumps to the measured loop, the loop's back edge is followed by a jump to
-the result check, and the data the loop reads is assembled rather than filled
-at run time, so the engine translates the loop in blocks of its own with only
-the setup's blocks in front of them.
+guest: the `macos-x86_64` emulator with an x86-64 image as `--rootfs`.
 
 The `guest_tagged_*_loop.S` probes reach memory through a pointer tagged in its
 top byte, as a process with heap pointer tagging does; the emulator ignores

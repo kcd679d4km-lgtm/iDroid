@@ -136,7 +136,7 @@ void report_x86_run_counters() noexcept
 		"direct_range_drops=%llu global_holds=%llu "
 		"registration_failures=%llu holder_registrations=%llu "
 		"flush_serial_misses=%llu registration_refusals=%llu "
-		"registration_unsettled=%llu kernel_frame_writes=%llu\n",
+		"registration_unsettled=%llu\n",
 		static_cast<unsigned long long>(accounting.unresolved_kernel_writes),
 		static_cast<unsigned long long>(accounting.direct_range_drops),
 		static_cast<unsigned long long>(accounting.global_holds),
@@ -144,8 +144,7 @@ void report_x86_run_counters() noexcept
 		static_cast<unsigned long long>(registrations.registrations),
 		static_cast<unsigned long long>(registrations.flush_serial_misses),
 		static_cast<unsigned long long>(registrations.refusals),
-		static_cast<unsigned long long>(registrations.unsettled),
-		static_cast<unsigned long long>(accounting.kernel_frame_writes));
+		static_cast<unsigned long long>(registrations.unsettled));
 	std::fclose(file);
 }
 

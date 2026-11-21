@@ -562,21 +562,6 @@ public:
 		if (runtime_.set_execution_engine(prepared.engine) != 0)
 			return -UML_EMULATOR_UNSUPPORTED;
 		runtime_.set_top_byte_ignore(prepared.top_byte_ignore);
-		/* Before any executor reads it, so before any table of the
-		 * component exists: the component runs only with the release it was
-		 * made from, which the launcher states. A launch that asks for it
-		 * where the build, the framework or the release does not have it
-		 * does not start; a launch that states no release (a Linux guest)
-		 * gets none. */
-		if (!prepared.informational) {
-			::uml::runtime::AotRelease release{
-				.id = prepared.aot_release_id,
-				.manifest_sha256 = prepared.aot_manifest_sha256,
-				.system_sha256 = prepared.aot_system_sha256};
-			if (!::uml::runtime::select_aot(prepared.aot,
-				    prepared.aot_release_stated ? &release : nullptr))
-				return -UML_EMULATOR_UNSUPPORTED;
-		}
 		if (!prepared.informational)
 			prepare_guest_hibernation(prepared.guest_hibernation);
 		runtime_.set_x86_jit_tier(prepared.jit_tier_instructions);

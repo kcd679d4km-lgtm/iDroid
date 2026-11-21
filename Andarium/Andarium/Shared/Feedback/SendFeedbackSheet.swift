@@ -38,7 +38,6 @@ struct SendFeedbackSheet: View {
         static let onlyWhileRunning = LocalizedStringResource(
             "Only while the virtual machine is running", table: "Feedback")
         static let createBugReport = LocalizedStringResource("Create bug report", table: "Feedback")
-        static let sendWithoutBugReport = LocalizedStringResource("Send without bug report", table: "Feedback")
         static let cancel = LocalizedStringResource("Cancel", table: "Feedback")
         static let discard = LocalizedStringResource("Discard", table: "Feedback")
         static let keepEditing = LocalizedStringResource("Keep editing", table: "Feedback")
@@ -104,10 +103,6 @@ struct SendFeedbackSheet: View {
                         .accessibilityIdentifier("feedback-cancel")
                 }
             }
-            // What a file holds opens inside the sheet, as Files opens a folder: Back returns to the mail.
-            .navigationDestination(item: $model.viewing) { attachment in
-                SendFeedbackViewerRoot(attachment: attachment, state: model.reports[attachment.id])
-            }
         }
         // Once the mail is sent the sheet stays as it was under the notice, and nothing in it acts: the notice's
         // own button closes the notice and the sheet together. The notice is outside this scope.
@@ -158,30 +153,10 @@ struct SendFeedbackSheet: View {
         } message: { missing in
             Text(missing.message.keepingTogether)
         }
-        // Send, with both fields written and no bug report while one can be made: the question comes first, and
-        // the mail opens only from its second button. Create bug report makes the report as the bar's button
-        // does and leaves the person in the sheet, to read it and tap Send again.
-        .alert(
-            Text("Send without a bug report?", tableName: "Feedback"),
-            isPresented: $model.askingForBugReport
-        ) {
-            // First, so that it is the one at the top of the alert. It is not marked as the alert's preferred
-            // action: iOS 27 draws a default-style preferred action's label in red on the tint's fill.
-            Button(Words.createBugReport) { model.createBugReport() }
-            Button(Words.sendWithoutBugReport) { model.sendWithoutBugReport() }
-        } message: {
-            Text(String(
-                localized: "Without a bug report, a problem will most likely not get fixed. Send without one only if your message reports no problem, such as a suggestion or a question, or if you don\u{2019}t want to attach it.",
-                table: "Feedback").keepingTogether)
-        }
         .photosPicker(
             isPresented: $picking, selection: $picked, matching: .any(of: [.images, .videos]),
             preferredItemEncoding: .current
         )
-        // The page the row pushes comes up over the fields: the keyboard goes.
-        .onChange(of: model.viewing != nil) { _, viewing in
-            if viewing { focus = nil } else { model.releaseViewerReaders() }
-        }
         .onChange(of: picked) { _, items in
             guard !items.isEmpty else { return }
             picked = []
@@ -321,55 +296,6 @@ struct SendFeedbackSheet: View {
     }
 
     private func row(_ attachment: SendFeedbackAttachment) -> some View {
-        let opens = SendFeedbackModel.canView(attachment.kind)
-        let files = model.reports[attachment.id]?.reader?.facts.fileCount
-        return HStack(spacing: opens ? 0 : 12) {
-            if opens {
-                // The bug report and the start log open to what they hold, to read before the mail goes: the
-                // whole row but its remove button leads in, and a hairline sets the button apart.
-                Button { model.view(attachment) } label: {
-                    HStack(spacing: 12) {
-                        rowContent(attachment, files: files)
-                        Spacer(minLength: 8)
-                        Image(systemName: "chevron.forward")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                            .padding(.trailing, 10)
-                            .accessibilityHidden(true)
-                    }
-                    .padding(.leading, 8)
-                    .frame(minHeight: 60)
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Self.spoken(attachment, files: files))
-                .accessibilityHint(Text(Self.viewHint(attachment.kind)))
-                .accessibilityIdentifier("feedback-attachment-open")
-                Rectangle()
-                    .fill(Color(.separator))
-                    .frame(width: 1, height: 28)
-                    .accessibilityHidden(true)
-            } else {
-                rowContent(attachment, files: files)
-                Spacer(minLength: 8)
-            }
-            Button { withAnimation(.snappy) { model.remove(attachment) } } label: {
-                Image(systemName: "xmark")
-                    .font(.footnote.weight(.bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 44, height: 44)
-                    .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(Self.removeLabel(attachment.kind))
-        }
-        .padding(.leading, opens ? 0 : 8)
-        .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 14, style: .continuous))
-        .accessibilityIdentifier("feedback-attachment")
-    }
-
-    /// The tile and the two lines of a row.
-    private func rowContent(_ attachment: SendFeedbackAttachment, files: Int?) -> some View {
         HStack(spacing: 12) {
             picture(attachment)
                 .frame(width: 44, height: 44)
@@ -383,21 +309,27 @@ struct SendFeedbackSheet: View {
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(attachment.kind == .file ? 1 : nil)
                     .truncationMode(.middle)
-                Text(Self.detail(attachment, files: files))
+                Text(Self.detail(attachment))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(Self.spoken(attachment, files: files))
+            .accessibilityLabel(Self.spoken(attachment))
+            Spacer(minLength: 8)
+            Button { withAnimation(.snappy) { model.remove(attachment) } } label: {
+                Image(systemName: "xmark")
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Self.removeLabel(attachment.kind))
         }
-    }
-
-    /// What VoiceOver says a tap on a row that opens does.
-    private static func viewHint(_ kind: SendFeedbackAttachment.Kind) -> LocalizedStringResource {
-        kind == .startLog
-            ? LocalizedStringResource("Shows the start log", table: "Feedback")
-            : LocalizedStringResource("Shows what the bug report holds", table: "Feedback")
+        .padding(.leading, 8)
+        .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 14, style: .continuous))
+        .accessibilityIdentifier("feedback-attachment")
     }
 
     @ViewBuilder
@@ -460,18 +392,17 @@ struct SendFeedbackSheet: View {
 
     /// The line under the title: the picture's pixels or a video's length,
     /// then the size.
-    static func detail(_ attachment: SendFeedbackAttachment, files: Int? = nil) -> String {
+    static func detail(_ attachment: SendFeedbackAttachment) -> String {
         var parts: [String] = []
         if let pixels = attachment.pixels { parts.append("\(pixels.width) \u{00D7} \(pixels.height)") }
         if let seconds = attachment.durationSeconds { parts.append(Formats.elapsed(seconds)) }
         parts.append(attachment.size)
-        if let files { parts.append(SendFeedbackViewerWords.files(files)) }
         return parts.joined(separator: " \u{00B7} ")
     }
 
     /// What VoiceOver reads for a row: its kind, a file's name, a video's length
     /// ("1 second", "42 seconds") and its size.
-    static func spoken(_ attachment: SendFeedbackAttachment, files: Int? = nil) -> String {
+    static func spoken(_ attachment: SendFeedbackAttachment) -> String {
         var parts = [String(localized: title(attachment.kind))]
         if attachment.kind == .file { parts.append(attachment.displayName ?? attachment.fileName) }
         if let seconds = attachment.durationSeconds {
@@ -479,7 +410,6 @@ struct SendFeedbackSheet: View {
                 localized: "^[\(seconds) second](inflect: true)", table: "Feedback").characters))
         }
         parts.append(attachment.size)
-        if let files { parts.append(SendFeedbackViewerWords.files(files)) }
         return parts.joined(separator: ", ")
     }
 
@@ -631,9 +561,9 @@ struct SendFeedbackSheet: View {
     /// bar cannot hold them; its accessibility name never does.
     private func sendButton(_ style: SendStyle) -> some View {
         Button {
-            // An alert that says what is missing, or asks about the bug report, would give the focus back to the
-            // field that had it when it closes, after the first empty field was asked for: let go of it first.
-            if state.missing != nil || state.asksAboutBugReportOnSend { focus = nil }
+            // An alert that says what is missing would give the focus back to the field that had it
+            // when it closes, after the first empty field was asked for: let go of it first.
+            if state.missing != nil { focus = nil }
             model.send()
         } label: {
             Group {
@@ -697,13 +627,15 @@ struct SendFeedbackSheet: View {
                     }
                     .accessibilityElement(children: .combine)
                 case .home:
-                    // No virtual machine runs, so no bug report can be made here: the card says what one is worth,
-                    // and the way to one.
-                    Text(String(
-                        localized: "Without a bug report, a problem will most likely not get fixed.",
-                        table: "Feedback").keepingTogether)
-                        .font(.subheadline.weight(.semibold))
-                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Reporting a bug?", tableName: "Feedback")
+                            .font(.subheadline.weight(.semibold))
+                        Text("A bug report and a screenshot need the virtual machine running.", tableName: "Feedback")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .accessibilityElement(children: .combine)
                     SendFeedbackSteps(font: .footnote)
                 }
             }
@@ -725,7 +657,7 @@ struct SendFeedbackSheet: View {
 
 /// The way to a bug report from where no virtual machine runs (Home): start it,
 /// make the problem happen again, and open Send feedback from the session's
-/// Settings with a bug report attached. VoiceOver reads them as one, numbers included.
+/// Settings. VoiceOver reads them as one, numbers included.
 struct SendFeedbackSteps: View {
     @ScaledMetric(relativeTo: .subheadline) private var badge: CGFloat = 20
     var font: Font = .subheadline
@@ -734,8 +666,7 @@ struct SendFeedbackSteps: View {
         VStack(alignment: .leading, spacing: 8) {
             step(1, LocalizedStringResource("Start the virtual machine.", table: "Feedback"))
             step(2, LocalizedStringResource("Make the problem happen again.", table: "Feedback"))
-            step(3, LocalizedStringResource(
-                "Tap the side keys, then Settings \u{203A} Send feedback, and attach a bug report.", table: "Feedback"))
+            step(3, LocalizedStringResource("Tap the side keys, then Settings \u{203A} Send feedback.", table: "Feedback"))
         }
         .accessibilityElement(children: .combine)
     }

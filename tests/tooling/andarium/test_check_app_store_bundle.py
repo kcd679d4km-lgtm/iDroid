@@ -36,11 +36,6 @@ THERMAL_KNOB = (
     "#include <stdlib.h>\n"
     'const char *fixture(void) { return getenv("ANDARIUM_THERMAL_STATE"); }\n'
 )
-# The harness launch's silent phone, which keeps the device's haptics off.
-HAPTICS_KNOB = (
-    "#include <stdlib.h>\n"
-    'const char *fixture(void) { return getenv("ANDARIUM_HAPTICS"); }\n'
-)
 # The UI tests' launch, which opens the session with no guest.
 PROBE_KNOB = (
     "#include <stdlib.h>\n"
@@ -94,7 +89,6 @@ DEBUG_SUPPORT = (
     ("old apps preview", "int _s8Andarium15ScriptedOldAppsC10listOldAppsAA0cD7ListingOyYaF(void) { return 1; }\n"),
     ("old apps preview", "int _s8Andarium8AppModelC15scriptedOldAppsAA0D4AppsSource_pSgvg(void) { return 1; }\n"),
     ("old apps preview", "int _s8Andarium18OldAppsProbeLaunchO6script2inAC6ScriptOSgSDyS2SG_tFZ(void) { return 1; }\n"),
-    ("text messages launch", "int _s8Andarium18TextMessagesLaunchO9requested2inSbSDyS2SG_tFZ(void) { return 1; }\n"),
     # The Simulator preview's hooks into the Send feedback sheet.
     ("send feedback preview", "int _s8Andarium20SendFeedbackServicesV20previewOpensAtLaunchSbvg(void) { return 1; }\n"),
     ("send feedback preview", "int _s8Andarium20SendFeedbackServicesV14previewPrepareyyAA0aD5ModelCYaYbcvg(void) { return 1; }\n"),
@@ -116,12 +110,6 @@ DEBUG_SUPPORT = (
     ("input probe", "int _s8Andarium8AppModelC10inputProbeAA0cD0CSgvg(void) { return 1; }\n"),
     ("input probe", 'const char *fixture(void) { return "inputProbeLog"; }\n'),
     ("input probe", 'const char *fixture(void) { return "inputProbeField"; }\n'),
-    # The UI tests' stand-in for the guest's thermal HAL, the harness's statement
-    # of Settings' "When hot" and the probe's start of the thermal session.
-    ("heat limit probe", "int _s8Andarium15ThermalProbeHalC10openStreams5Int32VyKF(void) { return 1; }\n"),
-    ("heat limit probe", "int _s8Andarium15HeatLimitLaunchO6stated2inSbSgSDyS2SG_tFZ(void) { return 1; }\n"),
-    ("heat limit probe", "int _s8Andarium10LiveRuntimeC17beginThermalProbeyyF(void) { return 1; }\n"),
-    ("heat limit probe", 'const char *fixture(void) { return "heat told severe"; }\n'),
     # The development build's compass check: its class, its launch setting and its line.
     ("compass readout", "int _s8Andarium14CompassReadoutC4line3forSSSgSo14CMDeviceMotionC_tF(void) { return 1; }\n"),
     ("compass readout", "int _s8Andarium20CompassReadoutLaunchO9requested2inSbSDyS2SG_tFZ(void) { return 1; }\n"),
@@ -224,16 +212,6 @@ REVIEW_PARTIAL = (
 REVIEW_NO_ASK = (
     'const char *fixture(void) { return "AndariumReviewID" "_$s8Andarium10ReviewLinkV" "action=write-review"; }\n'
 )
-# The App Store notice of TestFlight builds as a binary holds it: the Info.plist key
-# and its types (the identifier's, the card's, the record's, the services' and the Info
-# row's). The partial one has lost the card's type and the key.
-STORE_LINK_FEATURE = (
-    "const char *fixture(void) {\n"
-    '  return "AndariumStoreLinkID" "_$s8Andarium9StoreLinkV" "_$s8Andarium15StoreNoticeCardV" '
-    '"_$s8Andarium17StoreNoticeRecordV" "_$s8Andarium19StoreNoticeServicesV" "_$s8Andarium16StoreLinkSectionV";\n'
-    "}\n"
-)
-STORE_LINK_PARTIAL = 'const char *fixture(void) { return "_$s8Andarium9StoreLinkV"; }\n'
 # Follow developer on X as a binary holds it: the Info.plist key, a line of
 # the row's text, and its types (the row's and the profile address's builder it
 # shares with the tip header). The partial one has lost the text and the types.
@@ -292,10 +270,6 @@ INFO_SOURCE = """<?xml version="1.0" encoding="UTF-8"?>
 #ifdef APP_REVIEW
 \t<key>AndariumReviewID</key>
 \t<string>$(REVIEW_ID)</string>
-#endif
-#ifdef TESTFLIGHT_STORE_LINK
-\t<key>AndariumStoreLinkID</key>
-\t<string>$(STORE_LINK_ID)</string>
 #endif
 #ifdef SHEET_NAME
 \t<key>AndariumDeveloperName</key>
@@ -822,228 +796,6 @@ def review_app(root: Path, name: str, executable: Path, info: dict, *, table: bo
             (app / f"{language}.lproj" / "Review.strings").write_bytes(
                 plistlib.dumps({"Review on the App Store": "Review on the App Store"}, fmt=plistlib.FMT_BINARY))
     return app
-
-
-STORE_LINK_WORDS = {
-    "ja": {"Andarium is on the App Store": "AndariumがApp Storeに登場", "View in App Store": "App Storeで見る",
-           "Andarium on the App Store": "App StoreのAndarium"},
-    "zh-Hans": {"Andarium is on the App Store": "Andarium已上架App Store", "View in App Store": "在App Store中查看",
-                "Andarium on the App Store": "App Store上的Andarium"},
-    "zh-Hant": {"Andarium is on the App Store": "Andarium已在App Store上架", "View in App Store": "在App Store中檢視",
-                "Andarium on the App Store": "App Store上的Andarium"},
-}
-
-
-def store_link_app(root: Path, name: str, executable: Path, info: dict, *, table: bool = True,
-                   framework: Path | None = None, languages: tuple[str, ...] = ("ja", "zh-Hans", "zh-Hant")) -> Path:
-    """An application with the String Catalog table of the App Store notice, which the build compiles
-    in with the notice, in each language the catalog translates (English is the key and has no table
-    of its own), unless `table` is false."""
-    app = make_app(root, name, executable, info, framework=framework)
-    if table:
-        for language in languages:
-            (app / f"{language}.lproj").mkdir(exist_ok=True)
-            (app / f"{language}.lproj" / "StoreLink.strings").write_bytes(
-                plistlib.dumps(STORE_LINK_WORDS[language], fmt=plistlib.FMT_BINARY))
-    return app
-
-
-def check_store_link(root: Path, check, clean: Path) -> None:
-    """The App Store notice is compiled in only where the TestFlight build names the application's App
-    Store identifier, which it holds under a key of its own and nowhere else; no AppStore, Debug or
-    Release product holds it. The identifier is made up."""
-    identifier = "id1234567890"
-    digits = identifier[2:]
-    flag = ["--configuration", "TestFlight"]
-    named = [*flag, "--store-link-id", identifier, "--review-local-id", identifier]
-    local = [*flag, "--review-local-id", identifier]
-    store_info = app_info(AndariumStoreLinkID=identifier)
-    feature = build(root, "store-link-feature", STORE_LINK_FEATURE)
-    partial = build(root, "store-link-partial", STORE_LINK_PARTIAL)
-
-    # TestFlight, with the identifier: the code, the key, the table in each language, and the
-    # identifier in no other place of the bundle (it is the local configuration's, which Review on
-    # the App Store keeps out of every file but the notice's key of Info.plist).
-    check(store_link_app(root, "sl-tf-built", feature, store_info), passes=True,
-          expect="the App Store notice is compiled in", args=named)
-    check(store_link_app(root, "sl-tf-built-ready", feature, store_info), passes=True,
-          expect="ready for TestFlight", never=digits, args=named)
-    check(store_link_app(root, "sl-tf-no-local", feature, store_info), passes=True,
-          expect="ready for TestFlight", args=[*flag, "--store-link-id", identifier])
-    check(store_link_app(root, "sl-tf-absent", clean, app_info(), table=False), passes=True,
-          expect="the App Store notice is not compiled in", args=local)
-    check(store_link_app(root, "sl-tf-absent-ready", clean, app_info(), table=False), passes=True,
-          expect="ready for TestFlight", args=flag)
-    check(store_link_app(root, "sl-tf-no-key", feature, app_info()), passes=False,
-          expect="AndariumStoreLinkID must be the App Store identifier", args=named)
-    check(store_link_app(root, "sl-tf-other-key", feature, app_info(AndariumStoreLinkID="id1234567891")),
-          passes=False, expect="must be the App Store identifier the build names", args=named)
-    check(store_link_app(root, "sl-tf-not-built", clean, store_info), passes=False,
-          expect="lacks the App Store notice", args=named)
-    check(store_link_app(root, "sl-tf-partial", partial, store_info), passes=False,
-          expect="AndariumStoreLinkID, StoreNoticeCard", args=named)
-    check(store_link_app(root, "sl-tf-no-table", feature, store_info, table=False), passes=False,
-          expect="lacks the StoreLink strings table", args=named)
-    no_chinese = store_link_app(root, "sl-tf-no-zh-hant", feature, store_info)
-    (no_chinese / "zh-Hant.lproj" / "StoreLink.strings").unlink()
-    check(no_chinese, passes=False, expect="lacks the StoreLink strings table in zh-Hant", args=named)
-
-    # TestFlight, with no identifier named: nothing of the notice, in code, key, table or words.
-    check(store_link_app(root, "sl-tf-code-without", feature, app_info(), table=False), passes=False,
-          expect="carries the App Store notice", args=flag)
-    check(store_link_app(root, "sl-tf-code-without-reason", feature, app_info(), table=False), passes=False,
-          expect="though the build names no App Store identifier for it", args=flag)
-    check(store_link_app(root, "sl-tf-framework-without", clean, app_info(), table=False, framework=feature),
-          passes=False, expect="Runtime.framework/Runtime: carries the App Store notice", args=flag)
-    check(store_link_app(root, "sl-tf-key-without", clean, store_info, table=False), passes=False,
-          expect="has AndariumStoreLinkID though the build names no App Store identifier for it",
-          never=digits, args=flag)
-    check(store_link_app(root, "sl-tf-table-without", clean, app_info()), passes=False,
-          expect="is the StoreLink strings table though the build names no App Store identifier", args=flag)
-    for word in ("Andarium is on the App Store", "View in App Store", "Andarium on the App Store"):
-        words = make_app(root, f"sl-tf-words-{word[:6]}-{len(word)}", clean, app_info())
-        (words / "en.lproj").mkdir()
-        (words / "en.lproj" / "Localizable.strings").write_bytes(
-            plistlib.dumps({word: "x"}, fmt=plistlib.FMT_BINARY))
-        check(words, passes=False, expect="has App Store notice strings", args=flag)
-
-    # The identifier is well formed and no placeholder, in the TestFlight configuration.
-    for index, shape in enumerate(("1234567890", "ID1234567890", "id1234", "id12345678901234567",
-                                   "id12345a7890", "id123/456", "id 123456", "id123456?x=1")):
-        check(store_link_app(root, f"sl-tf-shape-{index}", feature, app_info(AndariumStoreLinkID=shape)),
-              passes=False, expect="is not an App Store identifier", args=[*flag, "--store-link-id", shape])
-    check(store_link_app(root, "sl-tf-placeholder", feature, app_info(AndariumStoreLinkID="id0000000000")),
-          passes=False, expect="is a placeholder", args=[*flag, "--store-link-id", "id0000000000"])
-    for index, good in enumerate(("id12345", "id100000", "id123456789012345")):
-        check(store_link_app(root, f"sl-tf-shape-ok-{index}", feature, app_info(AndariumStoreLinkID=good)),
-              passes=True, expect="the App Store notice is compiled in", args=[*flag, "--store-link-id", good])
-
-    # The identifier is the notice's alone: under the Review key, a TestFlight bundle is refused,
-    # with or without the notice's own key beside it.
-    review_key = app_info(AndariumReviewID=identifier)
-    check(store_link_app(root, "sl-tf-review-key", clean, review_key, table=False), passes=False,
-          expect="has AndariumReviewID though TestFlight has no Review on the App Store", never=digits, args=local)
-    both_keys = app_info(AndariumReviewID=identifier, AndariumStoreLinkID=identifier)
-    check(store_link_app(root, "sl-tf-both-keys", feature, both_keys), passes=False,
-          expect="has AndariumReviewID though TestFlight has no Review on the App Store", never=digits, args=named)
-    check(store_link_app(root, "sl-tf-both-keys-leak", feature, both_keys), passes=False,
-          expect="Info.plist: holds the App Store identifier of the local configuration", never=digits, args=named)
-    # Neither does the Review item ride along: TestFlight names no REVIEW_ID.
-    check(store_link_app(root, "sl-tf-review-id", feature, store_info), passes=False,
-          expect="TestFlight names an identifier; only the AppStore configuration has Review on the App Store",
-          never=digits, args=[*named, "--review-id", identifier])
-    review_code = build(root, "sl-tf-review-code", REVIEW_FEATURE)
-    check(store_link_app(root, "sl-tf-review-code-beside", review_code, store_info), passes=False,
-          expect="carries Review on the App Store (", args=named)
-
-    # The digits are in the root Info.plist's key and nowhere else: not in another key of it, not in
-    # any other file, however stored, and the check never prints them.
-    other_key = app_info(AndariumStoreLinkID=identifier, Note=identifier)
-    check(store_link_app(root, "sl-tf-leak-info-note", feature, other_key), passes=False,
-          expect="Info.plist: holds the App Store identifier of the local configuration", never=digits, args=named)
-    for form, content in encoded_forms(digits):
-        stray = store_link_app(root, f"sl-tf-leak-{form}", feature, store_info)
-        (stray / "Data.bin").write_bytes(content)
-        check(stray, passes=False, expect="Data.bin: holds the App Store identifier of the local configuration",
-              never=digits, args=named)
-    leaky = build(root, "sl-tf-leaky", f'const char *fixture(void) {{ return "{identifier}"; }}\n')
-    check(store_link_app(root, "sl-tf-leak-executable", leaky, store_info), passes=False,
-          expect="Fixture: holds the App Store identifier of the local configuration", never=digits, args=named)
-    check(store_link_app(root, "sl-tf-leak-framework", feature, store_info, framework=leaky), passes=False,
-          expect="Frameworks/Runtime.framework/Runtime: holds the App Store identifier of the local configuration",
-          never=digits, args=named)
-    nested = store_link_app(root, "sl-tf-leak-nested-plist", feature, store_info)
-    (nested / "Frameworks").mkdir()
-    (nested / "Frameworks" / "Other.plist").write_bytes(plistlib.dumps({"AndariumStoreLinkID": identifier}))
-    check(nested, passes=False, expect="Frameworks/Other.plist: holds the App Store identifier of the local configuration",
-          never=digits, args=named)
-    # A product that names no identifier for the notice has no place for the digits, whatever is in its Info.plist.
-    check(store_link_app(root, "sl-tf-leak-key-not-named", clean, store_info, table=False), passes=False,
-          expect="Info.plist: holds the App Store identifier of the local configuration", never=digits, args=local)
-
-    # AppStore: nothing of the notice, in code, key, table or words, and no identifier named for it.
-    check(store_link_app(root, "sl-as-absent", clean, app_info(), table=False), passes=True,
-          expect="the App Store notice is not compiled in")
-    check(store_link_app(root, "sl-as-code", feature, app_info(), table=False), passes=False,
-          expect="carries the App Store notice (", )
-    check(store_link_app(root, "sl-as-code-reason", feature, app_info(), table=False), passes=False,
-          expect="though AppStore has no App Store notice")
-    check(store_link_app(root, "sl-as-framework", clean, app_info(), table=False, framework=feature), passes=False,
-          expect="Runtime.framework/Runtime: carries the App Store notice")
-    check(store_link_app(root, "sl-as-key", clean, store_info, table=False), passes=False,
-          expect="has AndariumStoreLinkID though AppStore has no App Store notice", never=digits)
-    check(store_link_app(root, "sl-as-table", clean, app_info()), passes=False,
-          expect="is the StoreLink strings table though AppStore has no App Store notice")
-    for word in ("Andarium is on the App Store", "View in App Store", "Andarium on the App Store"):
-        words = make_app(root, f"sl-as-words-{word[:6]}-{len(word)}", clean, app_info())
-        (words / "en.lproj").mkdir()
-        (words / "en.lproj" / "Localizable.strings").write_bytes(
-            plistlib.dumps({word: "x"}, fmt=plistlib.FMT_BINARY))
-        check(words, passes=False, expect="has App Store notice strings though AppStore has no App Store notice")
-    for name, app in (("complete", store_link_app(root, "sl-as-named-complete", feature, store_info)),
-                      ("empty", make_app(root, "sl-as-named-empty", clean, app_info()))):
-        check(app, passes=False, expect="AppStore names an identifier; only the TestFlight configuration has "
-              "the App Store notice", never=digits, args=["--store-link-id", identifier])
-    # The AppStore's own identifier, under the Review key, is not the notice's and is no trouble.
-    review_info = app_info(AndariumReviewID=identifier)
-    check(review_app(root, "sl-as-review-ok", build(root, "sl-as-review", REVIEW_FEATURE), review_info), passes=True,
-          expect="the App Store notice is not compiled in",
-          args=["--review-id", identifier, "--review-local-id", identifier])
-    check(review_app(root, "sl-as-review-with-key", build(root, "sl-as-review-key", REVIEW_FEATURE),
-                     app_info(AndariumReviewID=identifier, AndariumStoreLinkID=identifier)), passes=False,
-          expect="has AndariumStoreLinkID though AppStore has no App Store notice",
-          never=digits, args=["--review-id", identifier, "--review-local-id", identifier])
-
-    # Debug and Release: absent, or the arranged placeholder, which Debug alone takes.
-    arranged = "id0000000000"
-    arranged_info = app_info(AndariumStoreLinkID=arranged)
-    mode = ["--store-link", "--configuration"]
-    for configuration in ("Debug", "Release"):
-        check(store_link_app(root, f"sl-{configuration}-absent", clean, app_info(), table=False), passes=True,
-              expect=f"the App Store notice is not compiled in ({configuration})", args=[*mode, configuration])
-        # The local configuration's identifier never reaches them.
-        check(store_link_app(root, f"sl-{configuration}-id", feature, store_info), passes=False,
-              expect="not the arranged placeholder", never=digits,
-              args=[*mode, configuration, "--store-link-id", identifier])
-        check(store_link_app(root, f"sl-{configuration}-code", feature, app_info(), table=False), passes=False,
-              expect="carries the App Store notice", args=[*mode, configuration])
-        check(store_link_app(root, f"sl-{configuration}-key", clean, store_info, table=False), passes=False,
-              expect="though the build names no App Store identifier for it", never=digits,
-              args=[*mode, configuration])
-        check(store_link_app(root, f"sl-{configuration}-table", clean, app_info()), passes=False,
-              expect="is the StoreLink strings table", args=[*mode, configuration])
-    check(store_link_app(root, "sl-Debug-arranged", feature, arranged_info), passes=True,
-          expect="the App Store notice is compiled in (Debug)", args=[*mode, "Debug", "--store-link-id", arranged])
-    check(store_link_app(root, "sl-Release-arranged", feature, arranged_info), passes=False,
-          expect="only Debug takes the arrangement", args=[*mode, "Release", "--store-link-id", arranged])
-    check(store_link_app(root, "sl-Release-arranged-absent", clean, app_info(), table=False), passes=False,
-          expect="only Debug takes the arrangement", args=[*mode, "Release", "--store-link-id", arranged])
-    # A Debug or Release product that names none has the feature's file names in the linker's debug
-    # map; the symbols of a function the feature defines are searched, though.
-    mapped = build_with_debug_map(root, "mapped-store-link", "/Users/NAME/StoreNoticeCard")
-    symbol_only = build_with_debug_map(
-        root, "store-link-symbol-only", "/Users/NAME/Project",
-        "__attribute__((visibility(\"hidden\"))) int plain_first(void) { return 2; }\n"
-        "__attribute__((visibility(\"hidden\"))) int _s8Andarium9StoreLinkV3urlyyF(void) { return 1; }\n")
-    for configuration in ("Debug", "Release"):
-        check(store_link_app(root, f"sl-{configuration}-debug-map", mapped, app_info(), table=False), passes=True,
-              expect=f"the App Store notice is not compiled in ({configuration})", args=[*mode, configuration])
-        check(store_link_app(root, f"sl-{configuration}-symbol-only", symbol_only, app_info(), table=False),
-              passes=False, expect="carries the App Store notice (StoreLink", args=[*mode, configuration])
-    # The phase of Debug's check never prints the identifier it was given either.
-    check(store_link_app(root, "sl-Debug-never", feature, store_info), passes=False, never=digits,
-          args=[*mode, "Debug", "--store-link-id", identifier])
-
-    # Config/Info.plist keeps every other value whichever way the notice's block went.
-    source = root / "Info.plist.store-link-source"
-    source.write_text(INFO_SOURCE, encoding="utf-8")
-    base = {"UIApplicationSceneManifest": {"UISceneConfigurations": {"Role": [
-        {"UISceneConfigurationName": "Fixture", "UISceneDelegateClassName": "Fixture.SceneDelegate"}]}}}
-    info_args = ["--info-source", str(source)]
-    check(store_link_app(root, "sl-source-tf", feature, app_info(AndariumStoreLinkID=identifier, **base)),
-          passes=True, expect="ready for TestFlight", args=[*named, *info_args])
-    check(store_link_app(root, "sl-source-as", clean, app_info(**base), table=False), passes=True,
-          expect="ready for the App Store", args=info_args)
 
 
 def check_tip_jar(root: Path, check, clean: Path, feedback_feature: Path, feedback_info: dict,
@@ -1777,7 +1529,6 @@ def check_testflight(root: Path, check, clean: Path, feedback_feature: Path, rec
     check(make_app(root, "tf-clean-local", clean, app_info()), passes=True, expect="ready for TestFlight",
           args=[*flag, *local])
     for line in ("Buy me tokens is not compiled in", "Review on the App Store is not compiled in",
-                 "the App Store notice is not compiled in",
                  "ICP filing number is not compiled in", "document pickers open the files in place"):
         check(make_app(root, f"tf-clean-{line.split()[0]}", clean, app_info()), passes=True, expect=line,
               args=[*flag, *local])
@@ -1927,10 +1678,8 @@ def check_testflight(root: Path, check, clean: Path, feedback_feature: Path, rec
         check(stray, passes=True, expect="ready for TestFlight", args=flag)
 
     # The phases of the other configurations, run for TestFlight, judge the same.
-    store_code = build(root, "tf-store-link", STORE_LINK_FEATURE)
     for mode, source, said in (("--tip-jar", tip_code, f"carries {no_tip}"),
                                ("--review", review_code, "carries Review on the App Store"),
-                               ("--store-link", store_code, "carries the App Store notice"),
                                ("--icp", icp_code, "carries the ICP filing number")):
         check(make_app(root, f"tf-mode-{mode[2:]}-clean", clean, app_info()), passes=True,
               expect="not compiled in (TestFlight)", args=[mode, *flag])
@@ -2212,8 +1961,8 @@ def main() -> int:
     checkers = Checkers(options.checker)
 
     # The modes that judge one feature, or a framework: they read no What's New notes.
-    modes = {"--feedback", "--follow-x", "--icp", "--pickers", "--tip-jar", "--review", "--store-link",
-             "--runtime", "--host-traces"}
+    modes = {"--feedback", "--follow-x", "--icp", "--pickers", "--tip-jar", "--review", "--runtime",
+             "--host-traces"}
     injected: dict[Path, str] = {}
     # The icon a fixture names where the harness set it: DuskJade, as `app_info` writes, until a run
     # under TestFlight makes it DuskEmber.
@@ -2276,7 +2025,6 @@ def main() -> int:
         knob = build(root, "knob", KNOB)
         launch = build(root, "launch", LAUNCH_KNOB)
         thermal = build(root, "thermal", THERMAL_KNOB)
-        haptics = build(root, "haptics", HAPTICS_KNOB)
         probe = build(root, "probe", PROBE_KNOB)
         old_apps_probe = build(root, "old-apps-probe", OLD_APPS_PROBE_KNOB)
         reports = {
@@ -2342,8 +2090,6 @@ def main() -> int:
               passes=False, expect="ANDARIUM_START")
         check(make_app(root, "thermal-knob", thermal, app_info()),
               passes=False, expect="ANDARIUM_THERMAL_STATE")
-        check(make_app(root, "haptics-knob", haptics, app_info()),
-              passes=False, expect="ANDARIUM_HAPTICS")
         check(make_app(root, "probe-knob", probe, app_info()),
               passes=False, expect="ANDARIUM_INPUT_PROBE")
         # The probe session's scripted list of old apps, for the App Store and for TestFlight.
@@ -2959,7 +2705,6 @@ def main() -> int:
                      ["--tip-products", tip_list, "--tip-local-products", tip_list])
         check_developer(root, check, clean)
         check_icp(root, check, clean)
-        check_store_link(root, check, clean)
         check_testflight(root, check, clean, feature, receiver)
         check_whole_bundle(root, check, clean)
         check_one_walk(checkers, root, clean, failures)

@@ -3374,6 +3374,7 @@ def start_guest(options: argparse.Namespace, plan: Plan, adb: str, private: path
         *([HARDWARE_INPUT_OPTION] if hardware_input else []),
     ]
     log = private / "emulator.log"
+    stream = log.open("wb")
     environment = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
     hold_directory = None
     if options.audio_hold_library is not None:
@@ -3391,27 +3392,19 @@ def start_guest(options: argparse.Namespace, plan: Plan, adb: str, private: path
         # The launcher makes this one too, and plays the application's leaving the foreground through it.
         edge = private / "edge-control"
         environment[EDGE_VARIABLE] = str(edge)
-    with log.open("wb") as stream:
-        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=stream, stderr=stream,
-                                   start_new_session=True, env=environment)
+    process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=stream, stderr=stream,
+                               start_new_session=True, env=environment)
+    stream.close()
     serial = f"127.0.0.1:{options.adb_port}"
-    # The emulator is this function's until it returns the guest: the caller's cleanup knows a guest only
-    # from that return, so a failure or an interrupt (a timeout, Ctrl-C) before it stops the emulator here.
-    try:
-        guest = Guest(adb, serial, process, log, private, hold_directory, control, hardware_input=hardware_input,
-                      edge=edge)
-        boot_android.wait_for_adb(adb, serial, process, options.boot_timeout)
-        if not boot_android.wait_for_boot_completed(adb, serial, process, options.boot_timeout):
-            raise Failure("Android did not reach sys.boot_completed")
-        boot_android.android_instance.booted(instance, identity)
-        if not options.instance:
-            boot_android.provision_guest(adb, serial)
-        print(f"booted; settling for {SETTLE_SECONDS} s")
-        time.sleep(SETTLE_SECONDS)
-    except BaseException:
-        boot_android.disconnect_adb(adb, serial)
-        boot_android.stop_guest(process)
-        raise
+    guest = Guest(adb, serial, process, log, private, hold_directory, control, hardware_input=hardware_input, edge=edge)
+    boot_android.wait_for_adb(adb, serial, process, options.boot_timeout)
+    if not boot_android.wait_for_boot_completed(adb, serial, process, options.boot_timeout):
+        raise Failure("Android did not reach sys.boot_completed")
+    boot_android.android_instance.booted(instance, identity)
+    if not options.instance:
+        boot_android.provision_guest(adb, serial)
+    print(f"booted; settling for {SETTLE_SECONDS} s")
+    time.sleep(SETTLE_SECONDS)
     return guest
 
 

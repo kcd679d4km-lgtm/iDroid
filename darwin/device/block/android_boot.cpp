@@ -35,10 +35,8 @@ constexpr std::string_view bootloaderCommand = "bootonce-bootloader";
 constexpr std::size_t bootloaderCommandSize = 32;
 constexpr std::size_t bootloaderMessageSize = 2048;
 
-/* The release a launch boots is the one the launcher attached, so a caller
- * may not state another (the emulator's --aot-release=). */
-constexpr std::array<std::string_view, 5> storagePrefixes {
-	"ubd", "initrd", "root=", "rootfstype=", "--aot-release="};
+constexpr std::array<std::string_view, 4> storagePrefixes {
+	"ubd", "initrd", "root=", "rootfstype="};
 constexpr std::string_view bootDevicesPrefix{"androidboot.boot_devices="};
 
 void validateSystemDisk(const Layout &layout, const std::filesystem::path &path)

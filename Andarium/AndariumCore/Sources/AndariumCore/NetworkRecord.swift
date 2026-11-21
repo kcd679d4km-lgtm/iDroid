@@ -13,8 +13,7 @@ import Foundation
 public struct NetworkRecord: Equatable, Sendable {
     /// Queries to the system's resolver, by how they ended.
     public struct DNS: Equatable, Sendable {
-        /// A missing name or a name without a record of the type is an answer,
-        /// unless the host had no network path: then it counts as failed.
+        /// A missing name or a name without a record of the type is an answer.
         public var answered: UInt64
         /// The system refused the query: the mark of a network iOS denies.
         public var policyDenied: UInt64
@@ -143,8 +142,7 @@ public struct NetworkRecord: Equatable, Sendable {
         if let dns {
             lines.append(
                 "DNS: \(dns.total) queries to the system's resolver: \(dns.answered) answered (a missing name is an "
-                    + "answer, unless the host had no network path: then it failed), "
-                    + "\(dns.policyDenied) refused by the system, \(dns.timedOut) timed out, "
+                    + "answer), \(dns.policyDenied) refused by the system, \(dns.timedOut) timed out, "
                     + "\(dns.failed) failed otherwise.")
         } else {
             lines.append("DNS: not counted.")

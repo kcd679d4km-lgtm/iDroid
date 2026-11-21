@@ -42,7 +42,8 @@ gadget vector_map3_extract_\size\()_m
 	.else
 	ldr x24, [x10, x13, lsl #3]
 	.endif
-	translate 1, UML_X86_64_TLB_WRITE_PAGE, \size, cross=Lx86_vector_map3_extract_cross\@
+	page_cross_check (\size), Lx86_vector_map3_extract_cross\@
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, \size
 	.if \size == 1
 	strb w24, [x7]
 	.elseif \size == 2
@@ -98,7 +99,8 @@ gadget vector_map3_extract_128_m
 	ubfx x13, x26, #16, #1
 	add x24, _vcpu, x10
 	add x24, x24, x13, lsl #4
-	translate 1, UML_X86_64_TLB_WRITE_PAGE, 16, cross=Lx86_vector_map3_extract_128_cross
+	page_cross_check 16, Lx86_vector_map3_extract_128_cross
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, 16
 	ldr q0, [x24]
 	str q0, [x7]
 	finish_store 16
@@ -144,7 +146,8 @@ gadget vector_map3_insert_\size\()_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	translate 0, UML_X86_64_TLB_READ_PAGE, \size, cross=Lx86_vector_map3_insert_cross\@
+	page_cross_check (\size), Lx86_vector_map3_insert_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, \size
 	.if \size == 1
 	ldrb w24, [x7]
 	.elseif \size == 4

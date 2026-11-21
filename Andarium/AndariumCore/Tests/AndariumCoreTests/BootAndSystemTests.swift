@@ -223,37 +223,6 @@ struct SystemInfoTests {
         }
     }
 
-    /// The manifest `Andarium/scripts/stage-system-image.py --unsigned-proof`
-    /// stages for a developer build
-    /// (`tests/unit/andarium/fixtures/staged-unsigned-proof-manifest.json`,
-    /// which that script's test compares its output with): the application
-    /// reads it as any release's, and names the proof by its ID as it is.
-    @Test func aStagedUnsignedProofIsReadAsAnyRelease() throws {
-        var url = URL(fileURLWithPath: #filePath)
-        for _ in 0..<5 { url.deleteLastPathComponent() }
-        url.append(path: "tests/unit/andarium/fixtures/staged-unsigned-proof-manifest.json")
-        let staged = try Data(contentsOf: url)
-        let info = try SystemInfo(manifest: staged, appVersion: "1.0 (1)", locale: britishEnglish)
-        #expect(info.version == "17")
-        #expect(info.release == "unsigned-proof-ff1")
-        #expect(info.buildLabel == "unsigned-proof-ff1")
-        #expect(info.buildID == "CP2A.260101.001")
-        #expect(info.kernel == "Linux 6.18.99")
-        #expect(info.architecture == "arm64, 4 KiB pages")
-        #expect(info.securityPatch == "1 October 2026")
-
-        let layout = """
-            { "system_disk": { "sha256": "\(String(repeating: "a", count: 64))" },
-              "data_disk": { "layout_version": 1, "capacity_gib": { "minimum": 4, "default": 8, "maximum": 128 } } }
-            """
-        let identity = try ReleaseIdentity(manifest: staged, layout: Data(layout.utf8))
-        #expect(identity.releaseID == "unsigned-proof-ff1")
-        #expect(identity.buildNumber == 29)
-        #expect(identity.buildFingerprint.hasSuffix(":user/test-keys"))
-        #expect(identity.securityPatch == "2026-10-01")
-        #expect(identity.isUnsignedProof)
-    }
-
     @Test func aMissingFieldNamesItself() {
         let broken = manifest.replacingOccurrences(of: "\"release_id\": \"20261031-los24-r4\"", with: "\"release_id\": \"\"")
         #expect(throws: SystemInfo.ManifestError.missing("release_id")) {

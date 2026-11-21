@@ -7,20 +7,9 @@ Run a real Linux kernel natively on iOS, through the magic of [User-mode Linux](
 
 ### Andarium
 
-The app was released on App Store but removed by Apple later due to violation of App Review Guidelines:
-```
-Guideline 2.5.2 & 1.1 - Performance - Software Requirements
+An Android emulator app built on the Kernarium runtime is available in [TestFlight beta](https://testflight.apple.com/join/qyPvJTUE). Source code is available under [`Andarium/`](/Andarium/).
 
-
-We noticed that the app includes functionality that isn’t focused on the experience for supported Apple platforms.
-
-
-Specifically, your app allows users to replicate Android operating systems on iOS platforms.
-```
-
-An Android emulator app built on the Kernarium runtime is **no longer** available for download in App Store. Source code is available under [`Andarium/`](/Andarium/).
-
-If you want, you can sideload IPA from [releases](https://github.com/imxieyi/Kernarium/releases).
+The TestFlight beta only has 10,000 tester slots and gets filled up quickly. Alternatively, you can sideload IPA from [releases](https://github.com/imxieyi/Kernarium/releases).
 
 ### Kernarium
 

@@ -540,11 +540,6 @@ bool set_translation_cache_budget(std::size_t total_bytes,
 		total_bytes, executors, per_executor_bytes);
 }
 
-bool select_aot(AotSelection selection, const AotRelease *release) noexcept
-{
-	return ::uml::cpu::select_aot(selection, release);
-}
-
 bool acquire_translation_cache_run_session() noexcept
 {
 	return ::uml::cpu::acquire_translation_cache_run_session();

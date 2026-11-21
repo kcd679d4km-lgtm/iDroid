@@ -276,30 +276,6 @@ class AndroidRunnerTests(unittest.TestCase):
             len((self.scratch.state / "crash-logs.txt").read_text().split()), 25)
         self.assertIn("left in place", outcome.out)
 
-    def test_a_run_that_tests_haptics_leaves_the_switch_to_the_person(
-        self
-    ) -> None:
-        scratch = self.scratch
-        # Not even an inherited statement silences it.
-        outcome = self.run_android(
-            "--app", str(scratch.app(automation=True)),
-            "--script", str(scratch.script), "--haptics",
-            environment={"DEVICECTL_CHILD_ANDARIUM_HAPTICS": "0"})
-        self.assertEqual(outcome.status, 0, outcome.err)
-        (launch,) = outcome.tool("launch")
-        self.assertNotIn("ANDARIUM_HAPTICS", launch["environment"])
-        self.assertIs(outcome.summary["haptics"], True)
-
-    def test_the_haptics_setting_is_not_a_free_setting(self) -> None:
-        # One name for it: --haptics, never --setting.
-        outcome = self.run_android(
-            "--app", str(self.scratch.app(automation=True)),
-            "--script", str(self.scratch.script),
-            "--setting", "ANDARIUM_HAPTICS=1")
-        self.assertEqual(outcome.status, 1)
-        self.assertIn("ANDARIUM_HAPTICS", outcome.err)
-        self.assertEqual(outcome.tool("launch"), [])
-
     def test_a_run_boots_works_powers_off_and_leaves_nothing(self) -> None:
         scratch = self.scratch
         app = scratch.app(automation=True)
@@ -329,9 +305,6 @@ class AndroidRunnerTests(unittest.TestCase):
                          f"tcp:127.0.0.1:{port}-5555")
         self.assertNotIn("KERNARIUM_ROOTFS", environment)
         self.assertNotIn("ANDARIUM_ERASE", environment)
-        # The guest's haptics are off for the run.
-        self.assertEqual(environment["ANDARIUM_HAPTICS"], "0")
-        self.assertIs(outcome.summary["haptics"], False)
         self.assertEqual(launch["args"][-1], "com.imxieyi.andarium")
 
         (proxy,) = outcome.tool("iproxy")

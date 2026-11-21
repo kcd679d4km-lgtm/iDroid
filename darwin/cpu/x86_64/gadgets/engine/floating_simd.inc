@@ -53,7 +53,8 @@ vector_move_64_128_rr vector_move_64_128_rr_vex, 1
 gadget \name
 	effective_address
 	mov x25, x7
-	translate 0, UML_X86_64_TLB_READ_PAGE, \width, cross=Lx86_vector_load_cross\@
+	page_cross_check (\width), Lx86_vector_load_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, \width
 	.if \width == 16
 	ldr q0, [x7]
 	.else
@@ -99,7 +100,8 @@ vector_move_load vector_move_256_rm, 32, 0
 gadget \name
 	effective_address
 	mov x25, x7
-	translate 1, UML_X86_64_TLB_WRITE_PAGE, \width, cross=Lx86_vector_store_cross\@
+	page_cross_check (\width), Lx86_vector_store_cross\@
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, \width
 	and x8, x23, #0xffff
 	add x8, _vcpu, x8
 	.if \width == 16
@@ -237,7 +239,8 @@ gadget \name
 	effective_address
 	mov x25, x7
 	ldr x24, [_stream], #8
-	translate 0, UML_X86_64_TLB_READ_PAGE, \width, cross=Lx86_vector_bitwise_cross\@
+	page_cross_check (\width), Lx86_vector_bitwise_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, \width
 	ldr q2, [x7]
 	.if \width == 32
 	ldr q3, [x7, #16]

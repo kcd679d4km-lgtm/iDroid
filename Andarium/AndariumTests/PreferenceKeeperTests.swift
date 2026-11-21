@@ -203,44 +203,6 @@ struct PreferenceKeeperTests {
         }
     }
 
-    @Test func theHeatLimitChoiceIsWrittenWhenMadeAndASecondSessionReadsIt() async throws {
-        try await withDefaults { defaults in
-            let model = model()
-            #expect(model.heatLimitOn && model.heatLimitToKeep == true)
-            let keeper = PreferenceKeeper(model: model, defaults: defaults)
-            keeper.start()
-
-            model.setHeatLimit(false)
-            try await written(by: keeper)
-            #expect(!HeatLimitPreference(defaults: defaults).isOn)
-            // A new session starts as the person left it.
-            let next = HeatLimitPreference(defaults: defaults).launch(automated: false)
-            #expect(!next.isOn && next.keepsChanges)
-            model.setHeatLimit(true)
-            try await written(by: keeper)
-            #expect(HeatLimitPreference(defaults: defaults).isOn)
-        }
-    }
-
-    @Test func aLaunchThatDecidedTheHeatLimitLeavesTheStoredChoice() async {
-        await withDefaults { defaults in
-            HeatLimitPreference(defaults: defaults).keep(false)
-            let model = model()
-            model.heatLimitOn = true
-            model.heatLimitDecidedByLaunch = true
-            #expect(model.heatLimitToKeep == nil)
-            let keeper = PreferenceKeeper(model: model, defaults: defaults)
-            keeper.start()
-
-            model.setHeatLimit(false)
-            model.setHeatLimit(true)
-            model.session.showStats = true
-            await keeper.pending?.value
-            keeper.keep()
-            #expect(!HeatLimitPreference(defaults: defaults).isOn, "a harness launch replaced the person's choice")
-        }
-    }
-
     @Test func aLaunchThatDecidedThePointerLeavesTheStoredChoice() async {
         await withDefaults { defaults in
             PointerPreference(defaults: defaults).keep(true)

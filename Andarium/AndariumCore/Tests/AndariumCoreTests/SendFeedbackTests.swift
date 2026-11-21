@@ -49,7 +49,7 @@ struct SendFeedbackTests {
     @Test func theBodyIsTheDetailsASeparatorAndTheInformation() {
         let body = SendFeedbackMail.body(details: "  It stops.\nEvery time.  \n", information: information())
         #expect(body.hasPrefix("It stops.\nEvery time.\n\n--\nApp: Andarium 1.0 (9), AppStore\n"))
-        #expect(body.hasSuffix("Thermal state: nominal\nFrame rate limit when hot: on\n"))
+        #expect(body.hasSuffix("Thermal state: nominal\n"))
     }
 
     @Test func withoutDetailsTheBodyLeavesRoomToType() {
@@ -100,15 +100,7 @@ struct SendFeedbackTests {
             "Running: yes, for 42 min",
             "Free space: 41.6 GiB",
             "Thermal state: nominal",
-            "Frame rate limit when hot: on",
         ])
-    }
-
-    @Test func theInformationBlockSaysInFixedEnglishWhetherTheFrameRateLimitIsOff() {
-        var off = information()
-        off.heatLimitOn = false
-        #expect(off.lines.suffix(2) == ["Thermal state: nominal", "Frame rate limit when hot: off"])
-        #expect(off.text.hasSuffix("Frame rate limit when hot: off"))
     }
 
     @Test func beforeAVirtualMachineExistsOrRunsTheBlockSaysSo() {
@@ -143,11 +135,7 @@ struct SendFeedbackTests {
             #expect(info.deviceText == "unknown")
             #expect(info.lines.contains("Device: unknown"))
         }
-        #expect(info.lines.count == 10 && !info.lines.contains("Device: "))
-        // The frame rate limit's line closes the block, in both states.
-        #expect(info.lines.last == "Frame rate limit when hot: on")
-        info.heatLimitOn = false
-        #expect(info.lines.count == 10 && info.lines.last == "Frame rate limit when hot: off")
+        #expect(info.lines.count == 9 && !info.lines.contains("Device: "))
     }
 
     @Test func aRunningTimeIsInTheLargestUnitThatFits() {
@@ -164,11 +152,8 @@ struct SendFeedbackTests {
         var info = information()
         info.language = "en\nUS"
         info.androidRelease = "r20\r\nextra"
-        #expect(info.lines.count == 10)
+        #expect(info.lines.count == 9)
         #expect(info.lines.allSatisfy { !$0.contains("\n") && !$0.contains("\r") })
-        #expect(info.lines.last == "Frame rate limit when hot: on")
-        info.heatLimitOn = false
-        #expect(info.lines.count == 10 && info.lines.last == "Frame rate limit when hot: off")
     }
 
     @Test func theBlockHoldsNothingThatSinglesOutTheDeviceOrThePerson() {

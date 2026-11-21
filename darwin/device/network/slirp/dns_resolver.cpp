@@ -43,10 +43,6 @@ struct HostResolver::Pending final {
 	bool done{};
 	/* No later record changes the answer. */
 	bool closed{};
-	/* The system said "no such record" or "no such name": there is nothing
-	 * to answer with, and whether that is true depends on the host having a
-	 * network (see finish). */
-	bool negative{};
 	/* Answer now, whatever the batch: the deadline passed or the daemon
 	 * connection was lost. */
 	bool expired{};
@@ -524,16 +520,13 @@ void HostResolver::record(Pending &pending, std::uint32_t flags,
 	case kDNSServiceErr_NoSuchRecord:
 		/* NODATA; the CNAMEs that led here stand. A negative answer
 		 * after a positive one (a cache change) is ignored. */
-		if (!pending.done) {
+		if (!pending.done)
 			pending.done = pending.closed = true;
-			pending.negative = true;
-		}
 		return;
 	case kDNSServiceErr_NoSuchName:
 		if (!pending.done) {
 			pending.rcode = dns::rcode_nxdomain;
 			pending.done = pending.closed = true;
-			pending.negative = true;
 		}
 		return;
 	default:
@@ -591,27 +584,6 @@ void HostResolver::finish(Pending &pending) noexcept
 	if (auto *stream = find_stream(pending.stream);
 	    stream != nullptr && stream->pending != 0)
 		--stream->pending;
-#if UML_SLIRP_TESTING
-	if (const auto hook =
-		    before_answer_for_testing_.load(std::memory_order_acquire);
-	    hook != nullptr)
-		hook(before_answer_context_for_testing_.load(
-			std::memory_order_relaxed));
-#endif
-	/* The state at the moment of the answer decides. With no network path
-	 * the system resolver has nothing to look a name up on and says "no such
-	 * record" at once, which is not a fact about the name: the guest is told
-	 * to try again, and the count says the query failed. The rule is "no
-	 * record of the asked type": a chain of aliases that ends in a negative
-	 * answer is one too, and passing its aliases on would let the guest
-	 * conclude "no address" as it did before. A query that had a record of
-	 * the asked type, or had already failed or timed out, is as it was. */
-	if (pending.negative && pending.outcome == DnsOutcome::answered &&
-	    path_ != nullptr && !path_->usable()) {
-		pending.rcode = dns::rcode_servfail;
-		pending.answers.clear();
-		pending.outcome = DnsOutcome::failed;
-	}
 	if (counters_ != nullptr)
 		counters_->dns(pending.outcome);
 	try {

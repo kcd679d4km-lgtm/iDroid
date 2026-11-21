@@ -140,16 +140,6 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 		host_addresses_distrust_logged_ = false;
 		if (!read_host_addresses_now())
 			return -EIO;
-		/* A hold of an earlier instance is over with it: the reports of
-		 * this one are read from here. */
-		address_reset_hold_.clear();
-		address_reset_table_.reset();
-		path_reports_seen_ = path_state_.reports();
-		path_outages_seen_ = path_state_.uncarried_reports();
-#if UML_SLIRP_TESTING
-		path_reports_handled_for_testing_.store(
-			path_reports_seen_, std::memory_order_release);
-#endif
 
 		SlirpConfig config{};
 		config.version = 6;
@@ -215,7 +205,6 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 			const auto stream_paths = dns_stream_paths();
 #endif
 			resolver_.set_counters(&counters_);
-			resolver_.set_network_path(&path_state_);
 			if (resolver_.start(
 				    [this](std::span<const std::uint8_t> frame) {
 					    try {
@@ -261,58 +250,10 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 			observer_.serve_dns_streams(
 				name_server_stream_ ? ipv4_value(nameserver_ipv4) : 0,
 				gateway_stream_ ? ipv4_value(host_alias_ipv4) : 0);
-			/* The system reports the current path at once and each change
-			 * after, and nothing else wakes the provider; a report wakes
-			 * the event loop, which decides what it means for the guest's
-			 * connections, so every open registers that wake. The first
-			 * open makes the monitor and it lives as long as the provider:
-			 * across every stop and reopen (a guest's restart) and across
-			 * a failed open, for it belongs to the provider and not to the
-			 * open that made it. It runs on a thread of its own whose Mach
-			 * port the system's start-up ties to it: a monitor made again
-			 * at each boot would let that thread's port go and leave the
-			 * process one short of its first boot's, which the restart
-			 * audit (guest-restart) reports. A monitor the system gave
-			 * none for never reports: an open makes another. */
-			path_state_.set_observer(notify_callback, this);
-#if UML_SLIRP_TESTING
-			if (!path_monitor_for_testing_ && path_monitor_) {
-				path_monitor_.reset();
-				/* Its last report is not the state of what
-				 * follows, and none is running now to write
-				 * another. */
-				path_state_.report(true);
-			}
-			const bool monitored = path_monitor_for_testing_;
-#else
-			constexpr bool monitored = true;
-#endif
-			if (path_monitor_ && path_monitor_->failed())
-				path_monitor_.reset();
-			if (monitored && !path_monitor_) {
-#if UML_SLIRP_TESTING
-				auto &make = path_monitor_factory_for_testing_;
-				path_monitor_ = make ? make(path_state_) :
-					uml::platform::
-					makeAppleHostNetworkPathMonitor(
-						path_state_);
-				path_monitors_made_for_testing_.fetch_add(
-					1, std::memory_order_relaxed);
-#else
-				path_monitor_ = uml::platform::
-					makeAppleHostNetworkPathMonitor(path_state_);
-#endif
-			}
 			worker_ = std::jthread{[this](std::stop_token stop_token) {
 				event_loop(stop_token);
 			}};
-		} catch (...) {
-			/* A thread or the path monitor that could not be made (the
-			 * system is out of memory): nothing of this open may stay but
-			 * a monitor already installed, which belongs to the provider
-			 * and keeps reporting, so that a later open() starts the
-			 * resolver again. */
-			path_state_.set_observer(nullptr, nullptr);
+		} catch (const std::system_error &) {
 			resolver_.stop();
 			slirp_.reset();
 			return -EIO;
@@ -409,15 +350,6 @@ void SlirpProvider::stop() noexcept
 	/* The resolver delivers into the receive ring from its own thread;
 	 * once it is joined nothing can refill the ring cleared below. */
 	resolver_.stop();
-	/* No report wakes a loop that is gone; the one in flight finishes first. */
-	path_state_.set_observer(nullptr, nullptr);
-	/* A monitor that works keeps the state current across the stop. With
-	 * none (the test build's default), or one the system gave no monitor
-	 * (it never reports and the next open replaces it), no one does, and
-	 * an outage that was reported is over: a reopen starts as a host with
-	 * a path does. */
-	if (!path_monitor_ || path_monitor_->failed())
-		path_state_.report(true);
 #if UML_SLIRP_TESTING
 	notify_receive_cleanup_for_testing();
 #endif
@@ -435,7 +367,6 @@ void SlirpProvider::stop() noexcept
 	}
 	slirp_.reset();
 	timers_.clear();
-	address_reset_hold_.clear();
 }
 
 #if UML_SLIRP_TESTING

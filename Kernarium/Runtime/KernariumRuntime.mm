@@ -97,7 +97,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <dlfcn.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
 #include <malloc/malloc.h>
@@ -611,10 +610,6 @@ struct MemoryFigures final {
      * the zone holds, which empty chunks keep until the system takes them. */
     std::uint64_t inUse {};
     std::uint64_t allocated {};
-    /* The resident pages of the ahead-of-time blob's mapping: file pages the
-     * footprint does not count, which the system keeps or reads again. Zero
-     * when the runtime does not carry the blob. */
-    std::uint64_t aotResident {};
 };
 
 /* The resident pages of every mapping that holds a wire. */
@@ -647,30 +642,6 @@ std::uint64_t wiredBytes() noexcept
     return wired;
 }
 
-/* The resident pages of the mapping that holds the ahead-of-time blob. */
-std::uint64_t aotResidentBytes() noexcept
-{
-    const void* blob = dlsym(RTLD_DEFAULT, "uml_aot_blob");
-    if (blob == nullptr)
-        return 0;
-    vm_address_t address = reinterpret_cast<vm_address_t>(blob);
-    vm_size_t size = 0;
-    natural_t depth = 0;
-    vm_region_submap_info_data_64_t information {};
-    mach_msg_type_number_t count = VM_REGION_SUBMAP_INFO_COUNT_64;
-    if (vm_region_recurse_64(
-            mach_task_self(),
-            &address,
-            &size,
-            &depth,
-            reinterpret_cast<vm_region_recurse_info_t>(&information),
-            &count) != KERN_SUCCESS ||
-        address > reinterpret_cast<vm_address_t>(blob))
-        return 0;
-    return static_cast<std::uint64_t>(information.pages_resident) *
-        vm_page_size;
-}
-
 MemoryFigures measureMemory() noexcept
 {
     MemoryFigures figures;
@@ -683,7 +654,6 @@ MemoryFigures measureMemory() noexcept
         figures.virtualSize = info.virtual_size;
     }
     figures.wired = wiredBytes();
-    figures.aotResident = aotResidentBytes();
     malloc_statistics_t zone {};
     malloc_zone_statistics(malloc_default_zone(), &zone);
     figures.inUse = zone.size_in_use;
@@ -699,16 +669,14 @@ void reportMemory(const char* label)
     constexpr double mebibyte = 1048576.0;
     std::printf(
         "Kernarium: memory %s footprint %.1f MiB peak %.1f MiB wired %.1f MiB "
-        "virtual %.1f MiB in-use %.1f MiB allocated %.1f MiB "
-        "aot-resident %.1f MiB\n",
+        "virtual %.1f MiB in-use %.1f MiB allocated %.1f MiB\n",
         label,
         figures.footprint / mebibyte,
         figures.peak / mebibyte,
         figures.wired / mebibyte,
         figures.virtualSize / mebibyte,
         figures.inUse / mebibyte,
-        figures.allocated / mebibyte,
-        figures.aotResident / mebibyte);
+        figures.allocated / mebibyte);
 }
 
 /* KERNARIUM_FOOTPRINT_LOG_MS reports the process footprint, the figure iOS
@@ -2049,15 +2017,6 @@ private:
         for (auto& argument :
              request_.androidStorage->kernelArguments(androidBoot_))
             arguments.push_back(std::move(argument));
-        /* The release the guest boots, as its files state it: the
-         * ahead-of-time component runs only with the release it was made
-         * from. A release that states none gets no such code. */
-        if (const auto identity = request_.androidStorage->releaseIdentity()) {
-            auto argument = uml::emulator::aot_release_argument(
-                identity->id, identity->manifestSha256, identity->systemSha256);
-            if (!argument.empty())
-                arguments.push_back(std::move(argument));
-        }
         appendKernelCommandLine(
             arguments,
             *request_.androidStorage,

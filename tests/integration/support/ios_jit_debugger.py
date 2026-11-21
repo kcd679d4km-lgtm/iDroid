@@ -51,7 +51,6 @@ import sys
 import tempfile
 import time
 
-import andarium
 import ios_device_reports
 
 # ``brk #0xf00d``.
@@ -362,25 +361,6 @@ def start_serving(device: str, pid: int, log: pathlib.Path, *,
         stdin=subprocess.DEVNULL, stdout=sink, stderr=subprocess.STDOUT)
 
 
-def launch_settings(
-    bundle_id: str, pairs: list[str], *, haptics: bool = False
-) -> dict[str, str]:
-    """The launch settings from the caller's NAME=VALUE pairs. A launch of
-    Andarium keeps the phone silent unless the run tests haptics."""
-    settings = {}
-    for pair in pairs:
-        name, _, value = pair.partition("=")
-        settings[name] = value
-    if bundle_id == andarium.BUNDLE_ID:
-        if andarium.HAPTICS_SETTING in settings:
-            raise andarium.AndariumError(
-                f"{andarium.HAPTICS_SETTING} is the --haptics option's, "
-                "not an --env pair")
-        if not haptics:
-            settings[andarium.HAPTICS_SETTING] = andarium.HAPTICS_OFF
-    return settings
-
-
 def main(argv: list[str] | None = None) -> int:
     """Launch an application stopped, serve its JIT request, hold its console."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -390,11 +370,6 @@ def main(argv: list[str] | None = None) -> int:
                         help="the application's name, as in <name>.app")
     parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE",
                         help="a launch setting for the application")
-    parser.add_argument(
-        "--haptics", action="store_true",
-        help="this run tests haptics: an Andarium launch then states no "
-        "haptics setting, so its own Haptics switch decides (without it the "
-        f"launch states {andarium.HAPTICS_SETTING}={andarium.HAPTICS_OFF})")
     parser.add_argument("--log", type=pathlib.Path, required=True,
                         help="where the console and the debugger's log go (a directory)")
     parser.add_argument("--until", default=None, metavar="REGEX",
@@ -405,11 +380,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--serve-timeout", type=float, default=900)
     ios_device_reports.add_arguments(parser)
     options = parser.parse_args(argv)
-    try:
-        settings = launch_settings(
-            options.bundle_id, options.env, haptics=options.haptics)
-    except andarium.AndariumError as error:
-        parser.error(str(error))
     options.log.mkdir(parents=True, exist_ok=True)
     ios_device_reports.preflight(
         options, [], extra_processes=[options.process_name])
@@ -418,10 +388,8 @@ def main(argv: list[str] | None = None) -> int:
     # What the device lists before the launch is not the launch's process.
     before = application_pids(options.device, options.process_name)
     environment = dict(os.environ)
-    # What the caller inherited is not the launch's statement of the haptics
-    # setting: the options state it or leave it out.
-    environment.pop(f"DEVICECTL_CHILD_{andarium.HAPTICS_SETTING}", None)
-    for name, value in settings.items():
+    for setting in options.env:
+        name, _, value = setting.partition("=")
         environment[f"DEVICECTL_CHILD_{name}"] = value
     with console_log.open("wb") as console:
         launch = subprocess.Popen(

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Qualify the guest's one Wi-Fi network: never disabled, a failed check only warns, kept through a suspend, rejoined after a boot.
+"""Qualify the guest's one Wi-Fi network: never disabled, a failed check only warns, rejoined after a suspend and a boot.
 
 The platform disables a saved network at its first failed internet check, and a
 disabled network is never joined again, so a guest whose first check failed has
@@ -19,7 +19,7 @@ show Android's own Wi-Fi mark. The runner shows all of it:
   validated and joined while Settings says "Limited connection", the status bar's
   Wi-Fi icon says "No internet", the validation log says the check failed and no
   notification or sign-in activity follows, also after a guest suspend and wake
-  (the same network, never validated again: the station is kept); a sign-in page (a redirect) and a block page
+  (a new network, with a higher ID); a sign-in page (a redirect) and a block page
   (a 200 answer) that the host's server gives the probes through `adb reverse`
   show the same and nothing more, and the current network's own probe log names
   the section's URL and the answer it received; on one network that is never
@@ -59,37 +59,18 @@ show Android's own Wi-Fi mark. The runner shows all of it:
   a minute and a half (a platform that counts no failed check must say in its
   validation log that the injected failure reached it: a failed check or the
   private DNS name evaluated; on the image under test the old "validated
-  without probes" statement is a failure), and stays joined through
+  without probes" statement is a failure), and is joined again after
   a guest suspend and wake (the host's route, `suspend` and `wake` on the
   management console; the launcher's log, with the guest kernel's console in
   it, is read from before the suspend to the end of the section, whenever its
   lines arrive and however the section ends: the host's own reset line fails it
   as a host GPU reset across the suspend, a known host defect that leaves the
   guest's graphics gone, and any other GPU error line as GPU errors whose cause
-  is not established, neither a Wi-Fi failure; see gpu_suspend_log), is joined
-  again after a restart, and a suspend keeps the station (see below); a network
-  the user marked metered, or turned Auto-connect off for,
+  is not established, neither a Wi-Fi failure; see gpu_suspend_log) and after
+  a restart; a network the user marked metered, or turned Auto-connect off for,
   keeps that after a restart (the script has nothing to save once the station
   has joined, and ends at once at marker 2); a forgotten network is still forgotten after a restart; and Wi-Fi
   that was turned off is still off;
-- a suspend keeps the station, in a stay of five seconds, in one after Wi-Fi was
-  turned off and on (the supplicant restarted), and in one of 40 s with the
-  emulator process stopped as iOS holds the app (the runner stops and continues
-  its own emulator): the network after the wake is the network before it, with
-  its ID; the guest's log from before the suspend to ten seconds after the wake
-  holds no disconnect of the supplicant or of the platform; a request made a
-  second after the wake (a ping to the gateway and a DNS query over TCP to the
-  name server, both answered inside the host) is answered; and the connections
-  that the host holds into the station's address (through a forward of the
-  launcher, to an echo server of the runner on that address) carry data both
-  ways, a line that the host wrote in the frozen stay arrives, and one that the
-  host closed in it is ended for the guest by the time the request starts. A
-  suspend that lands inside the connect delay of the joining station (virt_wifi
-  finishes a connect two seconds after it is asked for), with the emulator stopped
-  for a minute (longer than cfg80211 keeps a BSS that nothing holds), ends with
-  the station joined and a request working within a bounded time, or retried and
-  joined, never joined by its own report with no working network, and the guest
-  kernel's console shows no `WARNING:` and no call trace;
 - upgrade (only with --previous-release, once for each release): the data disk
   of a release whose platform disables the network for lack of internet (the
   stock rules), on which the probes and a forgotten and saved network disable
@@ -126,9 +107,6 @@ show Android's own Wi-Fi mark. The runner shows all of it:
   the save by a second or two, it is a note. `--quick-stop-only` runs these
   cases alone, which is how an image without the fix shows its defect: its
   script ends at marker 1 with no network and the case fails.
-- wake only (`--wake-only`): the warning of a failed check on the network that a wake
-  keeps, and the sections of a suspend, alone: how a kernel shows its defect or
-  its fix.
 
 Limits: a log buffer that wrapped before the stream attached cannot be detected;
 a crash during the final cleanup after the summary section is not scanned; and
@@ -143,7 +121,7 @@ deadline. The guest is reached through the shared adb server, always named with
 The runner is opt-in: it needs the macos-android17 executable, an installed
 release, and an adb client.
 usage: run_android_wifi_network.py --emulator uml-darwin-android17 [--release DIR]
-       [--previous-release DIR]... [--quick-stop-only | --wake-only]
+       [--previous-release DIR]... [--quick-stop-only]
 """
 
 from __future__ import annotations
@@ -158,7 +136,6 @@ import os
 import pathlib
 import re
 import shutil
-import signal
 import socket
 import struct
 import subprocess
@@ -201,41 +178,6 @@ POLL_SECONDS = 5
 SUSPEND_ATTEMPTS = 4
 STORE_SECONDS = 30
 MARGIN_SECONDS = 30
-# A suspend keeps the station: what is judged around a wake. The launcher forwards a host port (the slot's fourth, a
-# fixed one outside a slot) to the guest's Wi-Fi address, where the runner's echo server listens, so the host holds a
-# real connection into wlan0 and the guest's request goes through the default network the way an app's does.
-GUEST_WIFI_ADDRESS = "10.0.2.16"
-ECHO_PORT = 7001
-FORWARD_OFFSET = 3
-DEFAULT_FORWARD_PORT = 5994
-ECHO_DIRECTORY = "/data/local/tmp/wifi-wake"
-ECHO_SECONDS = 10.0
-ECHO_ATTEMPTS = 20
-# How long a stay is (short: the guest's own alarms wake a longer one, before the host's wake and the request that
-# measures from it), how long after the wake the guest's request goes out, and how long after the wake no
-# disconnect may show (the supplicant's reports and the platform's come within a tenth of a second of a wake).
-SUSPEND_STAY_SECONDS = 5
-WAKE_REQUEST_SECONDS = 1.0
-WAKE_WINDOW_SECONDS = 10.0
-# With the emulator stopped the stay is as long as a thawed guest's own RTC alarm would not let it be (about 30 s: the
-# alarm ends any suspend), and the host acts on the connections FROZEN_FIRST_SECONDS in.
-FROZEN_STAY_SECONDS = 40
-FROZEN_FIRST_SECONDS = 5
-# After Wi-Fi was turned on and the station joined, how long it is left before a suspend (the platform settles).
-TOGGLE_SETTLE_SECONDS = 20
-# A DNS answer over TCP: two bytes of length and the 12-byte header at the least.
-DNS_ANSWER_MIN_BYTES = 14
-# A suspend inside the station's connect delay (virt_wifi finishes a connect two seconds after it is asked for): the
-# supplicant's line that it has begun to connect, the one that it has connected, how long the guest is given to
-# begin, how long the emulator is stopped (past the 30 s after which cfg80211 forgets a BSS it does not hold), how
-# many times the suspend is tried to land inside the delay, and how long after its start a connect that finished
-# is taken to have been held across the suspend (the delay itself is two seconds).
-CONNECT_START_LINE = "Trying to associate with"
-CONNECT_DONE_LINE = "CTRL-EVENT-CONNECTED"
-CONNECT_WAIT_SECONDS = 60
-CONNECT_STAY_SECONDS = 60
-CONNECT_ATTEMPTS = 3
-CONNECT_HELD_SECONDS = 10.0
 # A saved network the disk holds enabled is joined well within this after boot_completed.
 BOOT_JOIN_SECONDS = 30
 # How long the platform takes to join a network the script saved again, by its own scan.
@@ -1070,122 +1012,8 @@ class Console:
             self.reply.unlink(missing_ok=True)
 
 
-# The echo server that the guest runs on its Wi-Fi address (see GUEST_WIFI_ADDRESS): the first line of a connection
-# names it, and the guest logs its start and its end, with its clock and the status of the reading (1 for a reset).
-ECHO_SERVER = f"""#!/system/bin/sh
-exec nc -s {GUEST_WIFI_ADDRESS} -p {ECHO_PORT} -L sh {ECHO_DIRECTORY}/echo.sh
-"""
-ECHO_CONNECTION = f"""#!/system/bin/sh
-log={ECHO_DIRECTORY}/conn.log
-read name
-echo "open $name $(date +%s.%N)" >> $log
-echo "$name"
-cat
-rc=$?
-echo "close $name $(date +%s.%N) rc=$rc" >> $log
-"""
-
-
-class Echo:
-    """One TCP connection that the host opened into the guest's Wi-Fi address (the launcher's forward to the echo
-    server), which the guest echoes line by line."""
-
-    def __init__(self, port: int, name: str) -> None:
-        self.name = name
-        self.sock = socket.create_connection(("127.0.0.1", port), timeout=ECHO_SECONDS)
-        self.buffer = b""
-
-    def send(self, text: str) -> None:
-        self.sock.sendall(f"{text}\n".encode())
-
-    def expect(self, text: str, seconds: float = ECHO_SECONDS) -> str | None:
-        """None once the guest has sent the line `text` (lines before it are passed over), else what happened
-        instead: the guest ended the connection, it broke, or nothing came."""
-        deadline = time.monotonic() + seconds
-        while True:
-            while b"\n" in self.buffer:
-                line, _, self.buffer = self.buffer.partition(b"\n")
-                if line.decode(errors="replace").strip() == text:
-                    return None
-            left = deadline - time.monotonic()
-            if left <= 0:
-                return f"no {text!r} in {seconds:.0f} s (the guest sent {self.buffer!r})"
-            self.sock.settimeout(left)
-            try:
-                chunk = self.sock.recv(4096)
-            except socket.timeout:
-                return f"no {text!r} in {seconds:.0f} s (the guest sent {self.buffer!r})"
-            except OSError as problem:
-                return f"the connection broke ({problem})"
-            if not chunk:
-                return "the guest ended the connection"
-            self.buffer += chunk
-
-    def exchange(self, text: str, seconds: float = ECHO_SECONDS) -> str | None:
-        """None when the guest echoes a line sent now, else what came instead."""
-        try:
-            self.send(text)
-        except OSError as problem:
-            return f"the connection broke ({problem})"
-        return self.expect(text, seconds)
-
-    def close(self) -> None:
-        try:
-            self.sock.close()
-        except OSError:
-            pass
-
-
-class EchoServer:
-    """For one section: the guest's echo server on its Wi-Fi address, and the host's connections into it."""
-
-    def __init__(self, guest: "Guest") -> None:
-        self.guest = guest
-        self.connections: list[Echo] = []
-
-    def __enter__(self) -> "EchoServer":
-        self.guest.start_echo()
-        return self
-
-    def __exit__(self, *_: object) -> None:
-        for connection in self.connections:
-            connection.close()
-        self.guest.stop_echo()
-
-    def open(self, name: str) -> Echo:
-        """A connection that the guest has accepted: it echoes its name. The server is given time to listen."""
-        last = "not tried"
-        for _ in range(ECHO_ATTEMPTS):
-            try:
-                connection = Echo(self.guest.forward_port, name)
-            except OSError as problem:
-                last = f"connect: {problem}"
-                time.sleep(1)
-                continue
-            problem = connection.exchange(name)
-            if problem is None:
-                self.connections.append(connection)
-                return connection
-            last = problem
-            connection.close()
-            time.sleep(1)
-        raise Failure(f"the guest's echo server does not answer at {GUEST_WIFI_ADDRESS}:{ECHO_PORT} through the "
-                      f"launcher's forward (host port {self.guest.forward_port}): {last}")
-
-
-@dataclass
-class Wake:
-    """One watched wake: the line the runner logged before the suspend, when the wake was answered (the
-    monotonic clock), and what the guest's request WAKE_REQUEST_SECONDS after it printed."""
-    mark: str
-    at: float = 0.0
-    request: str = ""
-
-
 class Guest:
     capture: "LogCapture | None" = None
-    wake: Wake | None = None
-    forward_port: int = DEFAULT_FORWARD_PORT
 
     def __init__(self, adb: str, serial: str, process: subprocess.Popen, log: pathlib.Path,
                  console: Console, private: pathlib.Path) -> None:
@@ -1268,80 +1096,6 @@ class Guest:
 
     def uptime(self) -> float:
         return float(self.shell("cat /proc/uptime").split()[0])
-
-    def start_echo(self) -> None:
-        """Starts the echo server on the station's address: the address must be the one the launcher forwards to."""
-        held = self.shell("ip -4 -o addr show dev wlan0 2>/dev/null; true")
-        if GUEST_WIFI_ADDRESS not in held:
-            raise Failure(f"wlan0 does not hold {GUEST_WIFI_ADDRESS}, the address the launcher's forward reaches: "
-                          f"{held.strip()[-200:] or 'no address'}")
-        directory = self.private / "echo"
-        directory.mkdir(exist_ok=True)
-        self.shell(f"rm -rf {ECHO_DIRECTORY}; mkdir -p {ECHO_DIRECTORY}")
-        for name, text in (("serve.sh", ECHO_SERVER), ("echo.sh", ECHO_CONNECTION)):
-            (directory / name).write_text(text)
-            pushed = self.adb_run("push", str(directory / name), f"{ECHO_DIRECTORY}/{name}", timeout=60)
-            if pushed.returncode != 0:
-                raise Failure(f"adb push {name}: {pushed.stdout.decode(errors='replace').strip()[-300:]}")
-        self.shell(f"nohup sh {ECHO_DIRECTORY}/serve.sh > {ECHO_DIRECTORY}/serve.log 2>&1 < /dev/null & "
-                   f"echo $! > {ECHO_DIRECTORY}/pid", timeout=20)
-
-    def stop_echo(self) -> None:
-        """Ends the echo server and every connection it still holds, by the process it started and by the script of
-        its connections (the bracket keeps the pattern from matching the command that carries it)."""
-        try:
-            self.adb_run("shell", f"kill $(cat {ECHO_DIRECTORY}/pid) 2>/dev/null; "
-                         f"pkill -f '[w]ifi-wake/echo.sh' 2>/dev/null; rm -rf {ECHO_DIRECTORY}", timeout=30)
-        except (subprocess.TimeoutExpired, OSError):
-            pass
-
-    def echo_log(self) -> str:
-        return self.shell(f"cat {ECHO_DIRECTORY}/conn.log 2>/dev/null; true")
-
-    def mark_log(self) -> str:
-        """A line in the guest's log, to read what follows it: the window of a stay."""
-        token = f"wake-{uuid.uuid4().hex}"
-        self.shell(f"log -t {SYNC_TAG} {token}")
-        return token
-
-    def log_text(self) -> str:
-        return self.shell("logcat -d -v threadtime -b main -b system", timeout=120)
-
-    def wake_request(self) -> str:
-        """The guest's request (WAKE_REQUEST), as it printed it, or why it did not run."""
-        try:
-            return self.shell(WAKE_REQUEST, timeout=30)
-        except (Failure, subprocess.TimeoutExpired) as problem:
-            return f"the request did not run: {problem}"
-
-    def freeze(self) -> None:
-        """Stops the emulator process this runner started, as iOS stops the app once the guest is suspended."""
-        self.__dict__["frozen"] = True
-        try:
-            os.kill(self.process.pid, signal.SIGSTOP)
-        except ProcessLookupError:
-            raise Failure("the emulator is gone: it cannot be stopped for the stay") from None
-
-    def thaw(self) -> None:
-        """Continues the emulator this runner stopped, if it did: a process that is gone is nothing to continue."""
-        if not self.__dict__.pop("frozen", False):
-            return
-        try:
-            os.kill(self.process.pid, signal.SIGCONT)
-        except ProcessLookupError:
-            pass
-
-    def stay_frozen(self, during: Callable[[], None], seconds: float = FROZEN_STAY_SECONDS) -> None:
-        """A stay with the emulator stopped, `seconds` long, in which `during` acts on the host's side at
-        FROZEN_FIRST_SECONDS. Nothing of the guest runs, so nothing wakes it: its RTC alarm does not end the stay. The
-        emulator is continued whatever happens."""
-        self.freeze()
-        try:
-            time.sleep(FROZEN_FIRST_SECONDS)
-            during()
-            time.sleep(max(0.0, seconds - FROZEN_FIRST_SECONDS))
-        finally:
-            self.thaw()
 
     def diagnose(self) -> str:
         parts = []
@@ -1494,37 +1248,24 @@ class Guest:
         pending = self.__dict__.get("pending_suspend")
         return None if pending is None else pending.settle()
 
-    def prepare_suspend(self) -> None:
-        """What a suspend needs of the runner first: the last suspend's mark settled, and the log stream confirmed
-        alive and carrying (it takes a second or so, so a step that must ask for the suspend at a given moment calls
-        it before, and passes `prepared` to the suspend)."""
-        earlier = self.suspend_log().settle()
+    def suspend_and_wake(self) -> None:
+        """The route the host's quiesce takes. The log stream may end with the connection: that is expected
+        until the guest answers again, and a stream that ended starts another segment. The launcher's log is
+        marked before the suspend and the mark stays pending through the checks that follow the wake, as
+        gpu_suspend_log says: it is scanned when this returns, again by the section that ends (Report.section),
+        and before another suspend takes a new mark. A failure of the whole operation (the suspend, the wait for
+        adb, the log stream's resume) is replaced by the GPU diagnosis when the log shows one, and kept otherwise."""
+        pending = self.suspend_log()
+        earlier = pending.settle()
         if earlier is not None:
             raise Failure(f"before another suspend: {earlier}")
-        if self.capture is not None:
-            self.capture.confirm(self)
-
-    def suspend_and_wake(self, watch: bool = False, frozen: Callable[[], None] | None = None,
-                         prepared: bool = False, stay: float = FROZEN_STAY_SECONDS) -> None:
-        """The route the host's quiesce takes. With `watch`, a line is logged before the suspend and a request goes
-        out WAKE_REQUEST_SECONDS after the wake (`self.wake`); with `frozen` the stay is the one of `stay_frozen`, `stay`
-        seconds long.
-
-        The log stream may end with the connection: that is expected until the guest answers again, and a stream that
-        ended starts another segment. The launcher's log is marked before the suspend and the mark stays pending
-        through the checks that follow the wake, as gpu_suspend_log says: it is scanned when this returns, again by
-        the section that ends (Report.section), and before another suspend takes a new mark. A failure of the whole
-        operation (the suspend, the wait for adb, the log stream's resume) is replaced by the GPU diagnosis when the
-        log shows one, and kept otherwise."""
-        if not prepared:
-            self.prepare_suspend()
-        pending = self.suspend_log()
         capture = self.capture
         if capture is not None:
+            capture.confirm(self)
             capture.going_down()
         pending.begin()
         try:
-            self.suspend_and_wake_guest(watch, frozen, stay)
+            self.suspend_and_wake_guest()
             if capture is not None:
                 capture.resumed(self)
         except BaseException as problem:
@@ -1540,9 +1281,7 @@ class Guest:
             pending.settle()
             raise Failure(found)
 
-    def suspend_and_wake_guest(self, watch: bool = False, frozen: Callable[[], None] | None = None,
-                               stay: float = FROZEN_STAY_SECONDS) -> None:
-        wake = Wake(self.mark_log()) if watch else None
+    def suspend_and_wake_guest(self) -> None:
         # A suspend can be refused while the guest is busy (EBUSY); it is asked for again.
         answer = ""
         for attempt in range(SUSPEND_ATTEMPTS):
@@ -1558,18 +1297,10 @@ class Guest:
             time.sleep(10)
         else:
             raise Failure(f"suspend: refused {SUSPEND_ATTEMPTS} times: {answer!r}")
-        if frozen is None:
-            time.sleep(SUSPEND_STAY_SECONDS)
-        else:
-            self.stay_frozen(frozen, stay)
+        time.sleep(15)
         answer = self.console.request("wake")
         if "running" not in answer:
             raise Failure(f"wake: the guest replied {answer!r}")
-        if wake is not None:
-            wake.at = time.monotonic()
-            time.sleep(WAKE_REQUEST_SECONDS)
-            wake.request = self.wake_request()
-            self.wake = wake
         wait_for("adb answers after the wake", RESUME_SECONDS, lambda: self.adb_answers(), self)
 
     def adb_answers(self) -> str | None:
@@ -1640,15 +1371,14 @@ def start_guest(options: argparse.Namespace, adb: str, private: pathlib.Path, re
     command = boot_android.emulator_command(
         boot_options, release_directory, instance / boot_android.android_instance.DATA_DISK, emulator,
         boot_android.data_capacity(boot_options, identity))
-    command.append(f"--net-forward=tcp:127.0.0.1:{options.forward_port}-{GUEST_WIFI_ADDRESS}:{ECHO_PORT}")
     log = private / f"emulator-{instance.name}-{int(time.time())}.log"
-    with log.open("wb") as stream:
-        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=stream, stderr=stream,
-                                   start_new_session=True,
-                                   env={**os.environ, "TMPDIR": str(private), "PYTHONDONTWRITEBYTECODE": "1"})
+    stream = log.open("wb")
+    process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=stream, stderr=stream,
+                               start_new_session=True,
+                               env={**os.environ, "TMPDIR": str(private), "PYTHONDONTWRITEBYTECODE": "1"})
+    stream.close()
     serial = f"127.0.0.1:{options.adb_port}"
     guest = Guest(adb, serial, process, log, Console(private / f"uml-kern{process.pid}", private), private)
-    guest.forward_port = options.forward_port
     try:
         boot_android.wait_for_adb(adb, serial, process, options.boot_timeout)
         # As soon as adb answers, the boot's log is streamed, from the start of the buffers.
@@ -1668,15 +1398,10 @@ def start_guest(options: argparse.Namespace, adb: str, private: pathlib.Path, re
 
 
 def stop(guest: Guest) -> None:
-    # A guest that is still stopped (a section that failed in its stay) would not see the signals that end it.
-    guest.thaw()
-    try:
-        if guest.capture is not None:
-            guest.capture.stop()
-    finally:
-        # The emulator ends whatever the capture's own end does.
-        boot_android.disconnect_adb(guest.adb, guest.serial)
-        boot_android.stop_guest(guest.process)
+    if guest.capture is not None:
+        guest.capture.stop()
+    boot_android.disconnect_adb(guest.adb, guest.serial)
+    boot_android.stop_guest(guest.process)
 
 
 # ---- The sections.
@@ -1794,185 +1519,13 @@ def check_not_disabled(guest: Guest) -> str | None:
     return f"{counted} failed internet checks counted, none disabled the network"
 
 
-def kept_problems(guest: Guest, before: int, wake: Wake) -> list[str]:
-    """What the guest's log and the platform's list say of a watched wake once the window of WAKE_WINDOW_SECONDS after
-    it has passed: no disconnect from the suspend to the end of the window, and the Wi-Fi network after is the one
-    before, with its ID (a wait for the list lets a station that joined again show the new network)."""
-    time.sleep(max(0.0, wake.at + WAKE_WINDOW_SECONDS - time.monotonic()))
-    problems = disconnect_problems(guest.log_text(), wake.mark)
-    seen: list[dict[int, frozenset[str]]] = []
-
-    def listed() -> str | None:
-        networks = wifi_networks(guest.connectivity())
-        seen[:] = [networks]
-        return None if networks else "dumpsys connectivity lists no Wi-Fi network"
-
-    try:
-        wait_for("a Wi-Fi network is listed after the wake", RESUME_SECONDS, listed, guest)
-    except Failure:
-        pass
-    return problems + kept_network_problems(seen[0] if seen else {}, before)
-
-
-def connection_problems(guest: Guest, connections: dict[str, Echo]) -> list[str]:
-    """What the connections that the host holds into the guest's Wi-Fi address show after a wake: the one that was
-    idle carries a line both ways (so does a connection that the host wrote to during a frozen stay, whose line
-    arrives), and the one that the host closed during the stay is ended for the guest by the time its request
-    starts, which is within WAKE_REQUEST_SECONDS of the wake."""
-    problems = []
-    for name, connection in connections.items():
-        if name == "A":
-            continue
-        if name == "C":
-            problem = connection.expect("C-during-stay", ECHO_SECONDS)
-            if problem is not None:
-                problems.append(f"the line the host sent during the stay did not arrive: {problem}")
-        problem = connection.exchange(f"{name}-after-wake")
-        if problem is not None:
-            problems.append(f"the open connection {name} carries no data after the wake: {problem}")
-    if "A" in connections:
-        started = request_time(guest.wake.request) if guest.wake is not None else None
-        ended = closed_at(guest.echo_log(), "A")
-        if started is None or ended is None or ended > started:
-            problems.append("the connection that the host closed during the stay was not ended for the guest within "
-                            f"{WAKE_REQUEST_SECONDS:.0f} s of the wake (its end: {ended}, the request began at {started})")
-    return problems
-
-
-def keeps_station_through_stay(guest: Guest, frozen: bool = False) -> str:
-    """One suspend and wake of the guest with its station joined, and what the station must keep through it: the
-    request after the wake goes through, the station is joined, the saved network stays enabled, no disconnect is
-    reported, the network after is the network before, and the connections that the host holds into the station's
-    address carry data (with the emulator stopped for the stay, three: one that the host closes during it, one that
-    stays idle and one that the host writes to). Every problem is reported."""
-    before = newest_wifi_network(guest.connectivity())
-    if before is None:
-        raise Failure("dumpsys connectivity lists no Wi-Fi network before the suspend")
-    problems: list[str] = []
-    with EchoServer(guest) as server:
-        connections = {name: server.open(name) for name in (("A", "B", "C") if frozen else ("S",))}
-
-        def during_stay() -> None:
-            connections["A"].close()
-            connections["C"].send("C-during-stay")
-
-        guest.suspend_and_wake(watch=True, frozen=during_stay if frozen else None)
-        wake = guest.wake
-        if wake is None:
-            raise Failure("the suspend left no record of the wake")
-        problems += request_problems(wake.request)
-        if not guest.joined():
-            problems.append(f"the station is not joined {WAKE_REQUEST_SECONDS:.0f} s after the wake")
-        problems += connection_problems(guest, connections)
-        problems += kept_problems(guest, before, wake)
+def check_suspend(guest: Guest) -> str | None:
+    guest.suspend_and_wake()
+    guest.wait_joined(RESUME_SECONDS, "the station joins again after the wake")
     status = selection_status(guest.dump())
     if status != "NETWORK_SELECTION_ENABLED":
-        problems.append(f"the saved network is {status} after the wake")
-    if problems:
-        raise Failure("; ".join(problems))
-    return (f"network {before} kept, no disconnect, the request answered, "
-            f"{len(connections)} connection{'s' if len(connections) > 1 else ''} carrying data")
-
-
-def check_suspend(guest: Guest) -> str | None:
-    """A suspend and wake keep the station (a short stay: the route the host's quiesce takes)."""
-    return keeps_station_through_stay(guest)
-
-
-def check_suspend_after_wifi_toggle(guest: Guest) -> str | None:
-    """Wi-Fi turned off and on again restarts the supplicant and joins a new network: what keeps the station through
-    a suspend must outlast that, and the new network is the one the suspend must keep."""
-    before = newest_wifi_network(guest.connectivity())
-    guest.shell("cmd wifi set-wifi-enabled disabled")
-    wait_for("Wi-Fi is off", 60, lambda: None if not wifi_enabled(guest.status()) else "still on", guest)
-    guest.shell("cmd wifi set-wifi-enabled enabled")
-    guest.wait_joined(JOIN_SECONDS, "the station joins after Wi-Fi was turned on")
-
-    def new_network() -> str | None:
-        net_id = newest_wifi_network(guest.connectivity())
-        if net_id is None or (before is not None and net_id <= before):
-            return "no new network is listed"
-        return None if guest.has_address() else "the station has no address yet"
-
-    wait_for("the station joins a new network", JOIN_SECONDS, new_network, guest)
-    time.sleep(TOGGLE_SETTLE_SECONDS)
-    return keeps_station_through_stay(guest)
-
-
-def check_frozen_stay(guest: Guest) -> str | None:
-    """A stay with the emulator stopped for longer than the guest's own RTC alarm would let it last, as iOS holds the
-    app: the station and its connections are as they were, a connection that the host closed in the stay is ended
-    for the guest, and a line that the host wrote in it arrives."""
-    return keeps_station_through_stay(guest, frozen=True)
-
-
-def suspend_inside_connect(guest: Guest) -> str:
-    """Wi-Fi off and on, and the suspend asked for the moment the supplicant begins to connect: one command of the
-    guest turns Wi-Fi on and waits for that line of the log, so the suspend follows it by one adb return and one
-    console request, well inside the two seconds that virt_wifi takes to finish a connect. The emulator is stopped for
-    CONNECT_STAY_SECONDS, then continued and woken. Returns the mark that the log was marked with before."""
-    guest.shell("cmd wifi set-wifi-enabled disabled")
-    wait_for("Wi-Fi is off", 60, lambda: None if not wifi_enabled(guest.status()) else "still on", guest)
-    mark = guest.mark_log()
-    guest.prepare_suspend()
-    started = guest.adb_run(
-        "shell", f"cmd wifi set-wifi-enabled enabled; timeout {CONNECT_WAIT_SECONDS} logcat -T 1 -m 1 -e "
-        f"'{CONNECT_START_LINE}' >/dev/null; echo status=$?", timeout=CONNECT_WAIT_SECONDS + 30)
-    if "status=0" not in started.stdout.decode(errors="replace"):
-        raise Failure(f"the supplicant did not begin to connect within {CONNECT_WAIT_SECONDS} s of Wi-Fi being turned "
-                      f"on: {started.stdout.decode(errors='replace').strip()[-200:]}")
-    guest.suspend_and_wake(frozen=lambda: None, prepared=True, stay=CONNECT_STAY_SECONDS)
-    return mark
-
-
-def check_suspend_in_connect_delay(guest: Guest) -> str | None:
-    """A suspend that lands inside the station's connect delay, with the emulator stopped for longer than a BSS that
-    nothing holds lives (so the connect finishes after the BSS has expired): the stack ends with the station joined and
-    a request working within a bounded time, or retried and joined, never connected by its own report with no working
-    network, and the guest kernel's console shows no warning and no call trace. The suspend is tried
-    CONNECT_ATTEMPTS times to land inside the delay (its connect then took the stay, not the delay); a row that never
-    landed it proved nothing and fails."""
-    console_from = guest.log_size()
-    problems: list[str] = []
-    took: float | None = None
-    for attempt in range(1, CONNECT_ATTEMPTS + 1):
-        mark = suspend_inside_connect(guest)
-
-        def working() -> str | None:
-            if not guest.joined():
-                return "the station is not joined"
-            found = request_problems(guest.wake_request())
-            return ("the framework says the station is joined, but " + "; ".join(found)) if found else None
-
-        try:
-            wait_for("the station is joined and a request works", RESUME_SECONDS, working, guest, interval=3.0)
-        except Failure as problem:
-            problems.append(str(problem))
-        took = connect_took(guest.log_text(), mark)
-        held = took is not None and took > CONNECT_HELD_SECONDS
-        print(f"     attempt {attempt}: the connect took "
-              f"{'no recorded time' if took is None else f'{took:.1f} s'}: {'inside' if held else 'outside'} the delay")
-        if held or problems:
-            break
-    problems += console_problems(guest.log_since(console_from))
-    held = took is not None and took > CONNECT_HELD_SECONDS
-    if not held and not problems:
-        raise Failure(f"the suspend did not land inside the connect delay in {CONNECT_ATTEMPTS} attempts (the last "
-                      f"connect took {took}): the row has shown nothing")
-    if problems:
-        raise Failure("; ".join(problems))
-    return (f"the station joined and a request works after a suspend {attempt} attempt(s) in, the connect held "
-            f"{took:.0f} s across the stay, the console quiet")
-
-
-def suspend_sections(guest: Guest, report: "Report") -> None:
-    report.section("the station stays joined through a suspend and wake", guest, lambda: check_suspend(guest))
-    report.section("the station stays joined through a suspend that follows Wi-Fi being turned off and on", guest,
-                   lambda: check_suspend_after_wifi_toggle(guest))
-    report.section("the station stays joined through a stay with the emulator stopped", guest,
-                   lambda: check_frozen_stay(guest))
-    report.section("a stay with the emulator stopped inside the station's connect delay ends with a working network "
-                   "and a quiet console", guest, lambda: check_suspend_in_connect_delay(guest))
+        raise Failure(f"the saved network is {status} after the wake")
+    return None
 
 
 def check_restart(guest: Guest) -> str | None:
@@ -2219,127 +1772,6 @@ def crash_findings(log: str) -> list[Finding]:
 
 def crash_problems(log: str) -> list[str]:
     return [finding.problem for finding in crash_findings(log)]
-
-
-# What the guest's log says of the station going away. A station that is kept through a suspend reports nothing of the
-# kind: the supplicant's disconnect and the platform's own (ConnectivityService says it of the network by its ID) are
-# what a station that the kernel dropped at the suspend shows within a tenth of a second of the wake.
-STATION_DROPS = (
-    ("wpa_supplicant", re.compile(r"\bCTRL-EVENT-DISCONNECTED\b"), "the supplicant reported a disconnect"),
-    ("ConnectivityService", re.compile(r"\[\d+ WIFI\] disconnected\b"), "ConnectivityService disconnected a network"),
-)
-
-
-def lines_after(log: str, token: str) -> list[LogLine] | None:
-    """The lines of the log after the one that carries `token`, or None when no line carries it (the buffer wrapped)."""
-    lines = log_lines(log)
-    for index, line in enumerate(lines):
-        if token in line.message:
-            return lines[index + 1:]
-    return None
-
-
-def disconnect_problems(log: str, mark: str) -> list[str]:
-    """Every report of the station going away in the log since the mark that the runner logged before a suspend. A
-    log that no longer holds the mark cannot be read, which is no pass."""
-    after = lines_after(log, mark)
-    if after is None:
-        return ["the guest's log no longer holds the line logged before the suspend, so the stay cannot be read"]
-    return [f"{what}: {line.text[:160]}" for line in after for tag, pattern, what in STATION_DROPS
-            if line.tag == tag and pattern.search(line.message)]
-
-
-def kept_network_problems(networks: dict[int, frozenset[str]], before: int) -> list[str]:
-    """The Wi-Fi network that the platform lists after a wake is the one that it listed before the suspend, with its
-    ID: a station that was dropped and joined again is a new network, and none listed is a network gone."""
-    if not networks:
-        return [f"network {before} is gone: ConnectivityService lists no Wi-Fi network"]
-    newest = max(networks)
-    return [f"network {before} became network {newest}"] if newest != before else []
-
-
-def log_seconds(when: str) -> float:
-    """The seconds into its day of a threadtime stamp (`MM-DD HH:MM:SS.mmm`); the day is kept, for a log that crosses
-    midnight is no case of the stays this reads."""
-    date, clock = when.split()
-    month, day = date.split("-")
-    hours, minutes, seconds = clock.split(":")
-    return ((int(month) * 31 + int(day)) * 24 * 3600 + int(hours) * 3600 + int(minutes) * 60 + float(seconds))
-
-
-def connect_took(log: str, mark: str) -> float | None:
-    """From the supplicant's first start of a connect after the mark to its first report of the connection, in the
-    guest's clock, or None when the log holds no such pair. A connect that a suspend held across a stay with the
-    emulator stopped took the stay (the guest's clock moves on when it thaws), and one that did not took the
-    connect delay."""
-    after = lines_after(log, mark)
-    if after is None:
-        return None
-    started: float | None = None
-    for line in after:
-        if line.tag != "wpa_supplicant":
-            continue
-        if started is None and CONNECT_START_LINE in line.message:
-            started = log_seconds(line.when)
-        elif started is not None and CONNECT_DONE_LINE in line.message:
-            return log_seconds(line.when) - started
-    return None
-
-
-# What the guest's kernel console says of a kernel that is wrong: a warning and a call trace.
-CONSOLE_FAULTS = re.compile(r"\bWARNING:|\bCall Trace:")
-
-
-def console_problems(console: str) -> list[str]:
-    """The lines of the launcher's log (the guest kernel's console among them) that report a kernel warning or print
-    a call trace."""
-    return [f"the guest console says: {line.strip()[:200]}" for line in console.splitlines()
-            if CONSOLE_FAULTS.search(line)]
-
-
-# The request that the guest makes WAKE_REQUEST_SECONDS after a wake, through its default network as an app's would
-# go: an ICMP echo to the launcher's gateway and a DNS query for `localhost` over TCP to its name server, both
-# answered inside the host. It prints the guest's clock at its start (the clock that the echo server logs with), the
-# ping's status and the bytes of the DNS answer (an error message goes to the null device: a refusal counts none).
-DNS_QUERY = bytes([0x00, 0x1b, 0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 9]) + b"localhost" + bytes([0, 0, 1, 0, 1])
-DNS_QUERY_OCTAL = "".join("\\%03o" % byte for byte in DNS_QUERY)
-WAKE_REQUEST = ("t=$(date +%s.%N); ping -c 1 -W 2 10.0.2.2 >/dev/null 2>&1; p=$?; "
-                f"n=$(printf '{DNS_QUERY_OCTAL}' | nc -w 3 10.0.2.3 53 2>/dev/null | wc -c); "
-                'echo "request t=$t ping_rc=$p dns_tcp_bytes=$n"')
-REQUEST_LINE = re.compile(r"^request t=(\d+(?:\.\d+)?) ping_rc=(\d+) dns_tcp_bytes=(\d+)\s*$", re.M)
-
-
-def request_problems(output: str) -> list[str]:
-    """What the guest's request after a wake says of its default network: the gateway answered the ping, and the name
-    server answered the query over TCP."""
-    match = REQUEST_LINE.search(output)
-    if match is None:
-        return [f"the request after the wake printed no answer: {output.strip()[-200:] or 'nothing'}"]
-    problems = []
-    if match[2] != "0":
-        problems.append(f"the gateway did not answer a ping {WAKE_REQUEST_SECONDS:.0f} s after the wake (status {match[2]})")
-    if int(match[3]) < DNS_ANSWER_MIN_BYTES:
-        problems.append(f"the name server did not answer a query over TCP {WAKE_REQUEST_SECONDS:.0f} s after the wake "
-                        f"({match[3]} bytes)")
-    return problems
-
-
-def request_time(output: str) -> float | None:
-    """The guest's clock when its request after the wake started, or None when it printed none."""
-    match = REQUEST_LINE.search(output)
-    return float(match[1]) if match else None
-
-
-# The echo server's log: one `close <name> <guest clock> rc=<status>` line when a connection ends.
-CLOSE_LINE = re.compile(r"^close (\S+) (\d+(?:\.\d+)?) rc=(\d+)\s*$", re.M)
-
-
-def closed_at(log: str, name: str) -> float | None:
-    """The guest's clock when the connection of the name ended, or None when it has not."""
-    for match in CLOSE_LINE.finditer(log):
-        if match[1] == name:
-            return float(match[2])
-    return None
 
 
 class LogStream:
@@ -2729,20 +2161,16 @@ def check_failed_check_warns(guest: Guest) -> str | None:
 
 
 def check_warning_after_wake(guest: Guest) -> str | None:
-    """A wake keeps the station: the network before the suspend is the network after it (no disconnect, the same ID),
-    and the failed check's warning stays on it, which is never validated again (`lastValidated` unchanged)."""
-    pin = pin_network(guest)
-    guest.suspend_and_wake(watch=True)
-    if guest.wake is None:
-        raise Failure("the suspend left no record of the wake")
-    problems = kept_problems(guest, pin.net_id, guest.wake)
-    try:
-        warning_shown(guest, True, SHORT_HOLD_SECONDS, "the failed check shows only the warning after the wake", pin)
-    except Failure as problem:
-        problems.append(str(problem))
-    if problems:
-        raise Failure("; ".join(problems))
-    return f"network {pin.net_id} kept through the wake, validated at {pin.validated_at} throughout, with the warning"
+    """Every wake drops the station and joins it again, as a new network with a new check: its ID is higher
+    than the one before the suspend, so an old network's log and mark cannot stand for it."""
+    before = newest_wifi_network(guest.connectivity())
+    if before is None:
+        raise Failure("dumpsys connectivity lists no Wi-Fi network before the suspend")
+    guest.suspend_and_wake()
+    guest.wait_joined(RESUME_SECONDS, "the station joins again after the wake")
+    pin = pin_network(guest, RESUME_SECONDS, newer_than=before)
+    warning_shown(guest, True, SHORT_HOLD_SECONDS, "the failed check shows only the warning after the wake", pin)
+    return f"network {before} became network {pin.net_id}"
 
 
 def page_settings(port: int, scenario: str = "") -> dict[str, str]:
@@ -3101,7 +2529,7 @@ def warning_sections(guest: Guest, server: "ProbeServer", report: "Report") -> N
     try:
         report.section("a failed internet check shows only the warning, and the network stays validated", guest,
                        lambda: check_failed_check_warns(guest))
-        report.section("the warning stays on the same network after a suspend and wake", guest,
+        report.section("the warning shows again after a suspend and wake", guest,
                        lambda: check_warning_after_wake(guest))
         report.section("a sign-in page in place of the expected answer shows only the warning", guest,
                        lambda: check_page_answer_warns(guest, server, "redirect"))
@@ -3139,7 +2567,7 @@ def fresh(options: argparse.Namespace, adb: str, private: pathlib.Path, report: 
         warning_sections(guest, server, report)
         report.section("a failed internet check does not disable the network", guest,
                        lambda: check_not_disabled(guest))
-        suspend_sections(guest, report)
+        report.section("the station joins again after a suspend and wake", guest, lambda: check_suspend(guest))
         report.section("the station joins again after a restart", guest, lambda: check_restart(guest))
         report.section("a joined network keeps its metered setting across a restart", guest,
                        lambda: check_metered_kept(guest, waits))
@@ -3152,29 +2580,6 @@ def fresh(options: argparse.Namespace, adb: str, private: pathlib.Path, report: 
     finally:
         if server is not None:
             server.close()
-        stop(guest)
-
-
-def wake_only(options: argparse.Namespace, adb: str, private: pathlib.Path, report: Report) -> None:
-    """The sections that judge a suspend and wake, on a fresh data disk: the warning of a failed check on the network
-    that a wake keeps, and the three stays."""
-    print("fresh data disk (a suspend and wake only)")
-    guest = start_guest(options, adb, private, options.release, private / "fresh", provision=True, watched=True)
-    try:
-        report.section("VirtWifi is saved and joined at the first boot", guest, lambda: check_saved_and_joined(guest))
-        try:
-            report.section("a failed internet check shows only the warning, and the network stays validated", guest,
-                           lambda: check_failed_check_warns(guest))
-            report.section("the warning stays on the same network after a suspend and wake", guest,
-                           lambda: check_warning_after_wake(guest))
-        finally:
-            try:
-                guest.delete_settings(ALL_CHECK_SETTINGS)
-            except (Failure, subprocess.TimeoutExpired, OSError) as problem:
-                print(f"     the probe settings were not deleted: {problem}", file=sys.stderr)
-        suspend_sections(guest, report)
-        report.section(CRASH_SECTION, guest, lambda: check_no_crashes(guest))
-    finally:
         stop(guest)
 
 
@@ -3524,16 +2929,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "runs only when this is given; give the option once for each release)")
     parser.add_argument("--quick-stop-only", action="store_true",
                         help="run the quick-stop case alone (a short run that shows an image's defect or fix)")
-    parser.add_argument("--wake-only", action="store_true",
-                        help="run the sections that judge a suspend and wake alone (a short run that shows a "
-                        "kernel's defect or fix: the failed check's warning, and the three stays)")
     parser.add_argument("--adb", default="adb", help="adb client to use")
     parser.add_argument("--adb-port", type=int, default=slot_ports.slot_port(slot_ports.ADB_OFFSET, DEFAULT_ADB_PORT),
                         help="loopback port the launcher forwards adbd to (default: the guest slot's first port "
                         f"when GUEST_SLOT_PORT_BASE is set, else {DEFAULT_ADB_PORT})")
-    parser.add_argument("--forward-port", type=int, default=slot_ports.slot_port(FORWARD_OFFSET, DEFAULT_FORWARD_PORT),
-                        help="loopback port the launcher forwards to the guest's Wi-Fi address (default: the guest "
-                        f"slot's fourth port when GUEST_SLOT_PORT_BASE is set, else {DEFAULT_FORWARD_PORT})")
     parser.add_argument("--cpus", type=int, default=4)
     parser.add_argument("--memory", default="4G")
     parser.add_argument("--boot-timeout", type=int, default=BOOT_SECONDS,
@@ -3546,9 +2945,6 @@ def main() -> int:
     if options.cpus <= 0 or options.boot_timeout <= 0:
         print("counts and timeouts must be positive", file=sys.stderr)
         return 2
-    if options.wake_only and (options.quick_stop_only or options.previous_release):
-        print("--wake-only runs on its own: it takes neither --quick-stop-only nor --previous-release", file=sys.stderr)
-        return 2
     adb = str(boot_android.resolve_executable(options.adb, sdk_fallback=True))
     script = BOOT_SCRIPT.read_text(encoding="utf-8")
     waits = Waits(boot_settle_seconds(script), REJOIN_SECONDS)
@@ -3556,14 +2952,11 @@ def main() -> int:
     private = pathlib.Path(tempfile.mkdtemp(prefix="uml-awn-"))
     report = Report()
     try:
-        if options.wake_only:
-            wake_only(options, adb, private, report)
-        else:
-            if not options.quick_stop_only:
-                fresh(options, adb, private, report, waits)
-            quick_stop(options, adb, private, report, waits)
-            if options.previous_release and not options.quick_stop_only:
-                upgrade(options, adb, private, report, waits)
+        if not options.quick_stop_only:
+            fresh(options, adb, private, report, waits)
+        quick_stop(options, adb, private, report, waits)
+        if options.previous_release and not options.quick_stop_only:
+            upgrade(options, adb, private, report, waits)
     except (Failure, boot_android.LauncherError, subprocess.TimeoutExpired, OSError) as problem:
         print(f"FAIL: {problem}", file=sys.stderr)
         report.failures.append(str(problem))

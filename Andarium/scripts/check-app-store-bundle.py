@@ -94,12 +94,7 @@ application that must:
     The rating prompt is part of the same feature: its counter, its record
     and the StoreKit request are in the product exactly where the item is, and
     its Debug knobs (a launch's way to set the counter) are in no AppStore
-    product;
-  - carry nothing of the App Store notice (Andarium/README.md#app-store-notice),
-    which only TestFlight builds have: no card, Info row, code, StoreLink
-    strings table or word of them, and no AndariumStoreLinkID key, so that an
-    AppStore bundle holds the application's identifier under the Review key
-    alone; and
+    product; and
   - carry Follow developer on X (Andarium/README.md#follow-developer-on-x)
     only when the build names a handle, by the same rule: compiled in exactly
     where the ignored local configuration holds a handle and the ignored
@@ -163,26 +158,20 @@ Store (with its rating prompt) and the ICP filing number, whatever the ignored
 local configuration holds: the build names no value for them, and the product
 holds no type, text, strings table, Info.plist key, tip header piece or
 artwork of them and no value of the local configuration, which the check finds
-by its bytes and never prints. It alone may carry the App Store notice, by the
-same rule as the other features: compiled in exactly where the ignored local
-configuration holds the application's App Store identifier (the one Review on
-the App Store reads), which the product then holds under the notice's own key
-(AndariumStoreLinkID) and nowhere else, with the notice's code and its StoreLink
-strings table in Japanese and both Chinese. A product without it holds nothing
-of the notice, and none of the identifier's digits, the notice's key excepted.
+by its bytes and never prints.
 
 The Xcode project runs it as the last build phase of the AppStore and TestFlight
 configurations, so a build that breaks one of these rules fails. In every other
 configuration a phase runs `--feedback`, which checks Send feedback alone,
 another `--tip-jar`, which checks Buy me tokens alone, a third `--review`,
-which checks Review on the App Store alone, a fourth `--store-link`, which
-checks the App Store notice alone, a fifth `--follow-x`, which checks Follow
-developer on X alone, a sixth `--icp`, which checks the ICP filing number
-alone, and a seventh `--pickers`: there each feature is absent unless a test or
-capture script arranged it with the example address, identifiers, placeholder,
-handle or number, in Debug alone. Each of the six prints one line that says
-whether its feature is compiled in; the seventh checks that the product holds
-the copy-mode presenter, the proof that the check above finds it.
+which checks Review on the App Store alone, a fourth `--follow-x`, which
+checks Follow developer on X alone, a fifth `--icp`, which checks the ICP
+filing number alone, and a sixth `--pickers`: there each feature is absent
+unless a test or capture script arranged it with the example address,
+identifiers, placeholder, handle or number, in Debug alone. Each of the five
+prints one line that says whether its feature is compiled in; the sixth checks
+that the product holds the copy-mode presenter, the proof that the check above
+finds it.
 """
 
 from __future__ import annotations
@@ -275,12 +264,12 @@ _SENSITIVE: re.Pattern[str] | None = None
 
 
 def sensitive_pattern(options: argparse.Namespace) -> re.Pattern[str] | None:
-    arranged = {FEEDBACK_ARRANGED, REVIEW_ARRANGED, STORE_LINK_ARRANGED, ICP_ARRANGED, FOLLOW_X_ARRANGED,
+    arranged = {FEEDBACK_ARRANGED, REVIEW_ARRANGED, ICP_ARRANGED, FOLLOW_X_ARRANGED,
                 *TIP_ARRANGED.values(), *DEVELOPER_ARRANGED.values()}
     given = [options.feedback_address, options.feedback_receiver, options.follow_x_handle,
              options.developer_x_handle, *split_products(options.tip_products).values(),
              *split_products(options.tip_local_products).values(), options.review_id, options.review_local_id,
-             options.store_link_id, options.developer_name, options.developer_github, options.developer_x,
+             options.developer_name, options.developer_github, options.developer_x,
              options.developer_local_github, options.icp_number, options.icp_local_number]
     values = {value for value in given if value and value not in arranged}
     # The digits of an App Store identifier are searched for alone, so they are replaced alone too.
@@ -369,23 +358,6 @@ REVIEW_FRAGMENTS = (b"ReviewServices", b"ReviewConfiguration", b"ReviewAsk", *RE
 # it that no other table has.
 REVIEW_TABLE = "Review"
 REVIEW_WORDS = ("Review on the App Store",)
-# The App Store notice of TestFlight builds (a card on Home and Welcome, a row in
-# Info). The build writes the application's App Store identifier to Info.plist
-# under this key only where the notice is compiled in
-# (Andarium/Config/Andarium.xcconfig), which only a TestFlight build whose
-# maker has the identifier does; Review on the App Store has a key of its own.
-STORE_LINK_KEY = "AndariumStoreLinkID"
-# The only identifier a configuration other than TestFlight may carry: the
-# placeholder the test and capture scripts arrange, Debug's alone.
-STORE_LINK_ARRANGED = "id0000000000"
-# What the notice leaves in a binary: its types (Swift writes a name's length
-# before it, so a fragment of the name matches) and the Info.plist key it reads.
-STORE_LINK_REQUIRED = (b"StoreLink", STORE_LINK_KEY.encode(), b"StoreNoticeCard")
-STORE_LINK_FRAGMENTS = (b"StoreNoticeRecord", b"StoreNoticeServices", b"StoreLinkSection", *STORE_LINK_REQUIRED)
-# The notice's own strings table (Localization/StoreLink.xcstrings), and the
-# words of it that no other table has: the card's title and button, and the row.
-STORE_LINK_TABLE = "StoreLink"
-STORE_LINK_WORDS = ("Andarium is on the App Store", "View in App Store", "Andarium on the App Store")
 # Follow developer on X. The build writes the developer's handle to Info.plist
 # under this key only where the row is compiled in (Andarium/Config/Andarium.xcconfig).
 FOLLOW_X_KEY = "AndariumFollowXHandle"
@@ -693,10 +665,6 @@ DEBUG_SYMBOLS = (
     # AppModel.scriptedOldApps and the probe's launch setting
     # OldAppsProbeLaunch): the application asks the image.
     ("old apps preview", (b"15ScriptedOldApps", b"15scriptedOldApps", b"18OldAppsProbeLaunch")),
-    # The launch setting that shows the held-back text messages
-    # (TextMessagesLaunch): the application offers them only once an accepted
-    # image carries the service.
-    ("text messages launch", (b"18TextMessagesLaunch",)),
     # The Simulator preview's hooks into the Send feedback sheet
     # (SendFeedbackServices.previewOpensAtLaunch and previewPrepare): the
     # preview opens the sheet and fills a draft; the application never does.
@@ -718,12 +686,6 @@ DEBUG_SYMBOLS = (
     ("input probe", (b"10InputProbe", b"16InputProbeLaunch", b"29RecordingHardwareInputRuntime",
                      b"15beginInputProbe", b"17InputProbeReadout", b"19makeInputProbeModel",
                      b"10inputProbe")),
-    # The UI tests' stand-in for the guest's thermal HAL, its launch (the
-    # thermal state a probe states runs the thermal session) and the harness's
-    # statement of Settings' "When hot" (Live/ThermalProbe.swift,
-    # LaunchEnvironment.swift: ThermalProbeHal, HeatLimitLaunch,
-    # LiveRuntime.beginThermalProbe).
-    ("heat limit probe", (b"15ThermalProbeHal", b"15HeatLimitLaunch", b"17beginThermalProbe")),
     # The reading a test puts in place of the system's hinge and regions
     # (Andarium/Shared/FoldSceneReader.swift), compiled out by APP_STORE.
     ("fold reader stub", (b"15FoldSceneReaderC4stub",)),
@@ -777,7 +739,6 @@ DEBUG_STRINGS = (
                     b"ADB authorization is off", b"removed the boot payload")),
     ("remote framebuffer", (b"RFB 003.00",)),
     ("input probe", (b"inputProbeLog", b"inputProbeField")),
-    ("heat limit probe", (b"heat told ",)),
     ("camera diagnostics", (b"ROTATE_AND_CROP", b"Camera: memory: ")),
     ("compass readout", (b"Andarium: compass-check: ",)),
     ("synthetic camera", (b"SyntheticPhone1,1", b"SyntheticTablet1,1",
@@ -1132,15 +1093,14 @@ def catalog_holders(app: Path, name: bytes) -> list[str]:
 
 # The optional features' blocks of Config/Info.plist, and the keys they write.
 OPTIONAL_BLOCKS = re.compile(
-    r"^#ifdef (?:FEEDBACK_MAIL|TIP_JAR|APP_REVIEW|TESTFLIGHT_STORE_LINK|SHEET_NAME|SHEET_GITHUB|SHEET_X|FOLLOW_X|ICP_FILING)\n.*?^#endif\n",
+    r"^#ifdef (?:FEEDBACK_MAIL|TIP_JAR|APP_REVIEW|SHEET_NAME|SHEET_GITHUB|SHEET_X|FOLLOW_X|ICP_FILING)\n.*?^#endif\n",
     re.S | re.M)
-OPTIONAL_KEYS = frozenset(
-    {FEEDBACK_KEY, TIP_KEY, REVIEW_KEY, STORE_LINK_KEY, FOLLOW_X_KEY, ICP_KEY, *DEVELOPER_KEYS.values()})
+OPTIONAL_KEYS = frozenset({FEEDBACK_KEY, TIP_KEY, REVIEW_KEY, FOLLOW_X_KEY, ICP_KEY, *DEVELOPER_KEYS.values()})
 
 
 def info_source_problems(app: Path, source: Path) -> list[str]:
-    """Every key of Config/Info.plist but the optional features' (feedback, tip, review, the App Store notice,
-    developer and Follow developer on X), as the built Info.plist has it. The source is
+    """Every key of Config/Info.plist but the optional features' (feedback, tip, review, developer and
+    Follow developer on X), as the built Info.plist has it. The source is
     preprocessed (those blocks are conditional), and a build adds keys of its own and fills in build
     settings, so what is compared is each source key, a value naming a build
     setting (`$(...)`) matching whatever the build made of it. A preprocessor
@@ -1682,48 +1642,8 @@ def review_strings(app: Path) -> list[str]:
     return found
 
 
-def store_link_identifier_problems(configuration: str, identifier: str) -> list[str]:
-    """What is wrong with the identifier a build names for the App Store notice, whatever the
-    product holds. Only TestFlight reads the local configuration; the arranged placeholder is
-    Debug's alone: Release, the build that sideloads and forks make, never takes it."""
-    if not identifier:
-        return []
-    if configuration == APP_STORE:
-        return [f"the App Store notice: {configuration} names an identifier; "
-                "only the TestFlight configuration has the App Store notice"]
-    if configuration != TESTFLIGHT:
-        if identifier != STORE_LINK_ARRANGED:
-            return [f"the App Store notice: {configuration} names an identifier that is not the arranged "
-                    "placeholder; only the TestFlight configuration reads the local configuration"]
-        if configuration != "Debug":
-            return [f"the App Store notice: {configuration} names the arranged placeholder; "
-                    "only Debug takes the arrangement"]
-        return []
-    if re.fullmatch(r"id[0-9]{5,15}", identifier) is None:
-        return ["the App Store notice: the identifier in the local configuration is not an App Store "
-                "identifier (id and digits)"]
-    if set(identifier[2:]) == {"0"}:
-        return ["the App Store notice: the identifier in the local configuration is a placeholder"]
-    return []
-
-
-def info_names_outside_store_link_key(app: Path, values: list[str]) -> bool:
-    """Whether the root Info.plist holds any of `values` in a key or value other than the App
-    Store notice's key. A plist that cannot be read vouches for nothing."""
-    try:
-        with (app / "Info.plist").open("rb") as handle:
-            info = plistlib.load(handle)
-    except (OSError, plistlib.InvalidFileException, ValueError):
-        return True
-    if not isinstance(info, dict):
-        return True
-    rest = {key: value for key, value in info.items() if key != STORE_LINK_KEY}
-    texts = [text.lower() for text in strings_in(rest)]
-    return any(value.lower() in text for value in values for text in texts)
-
-
 def review_problems(
-    app: Path, configuration: str, identifier: str, local: str = "", store_link_id: str = "",
+    app: Path, configuration: str, identifier: str, local: str = "",
 ) -> tuple[list[str], bool]:
     """Whether the product holds Review on the App Store as the build said it
     would, and whether it holds it. `identifier` is the build setting
@@ -1731,20 +1651,12 @@ def review_problems(
     configuration, empty otherwise, or the placeholder a test script arranged.
     `local` is the local configuration's own identifier, whatever the
     configuration: wherever the build does not name it, no file of the bundle
-    holds its digits. The one place it may be is the root Info.plist of a
-    TestFlight build that names it for the App Store notice (`store_link_id`,
-    the build setting STORE_LINK_ID), under that notice's key alone. The
-    identifier is never printed."""
+    holds its digits. The identifier is never printed."""
     problems = review_identifier_problems(configuration, identifier)
     expected = bool(identifier) and not problems
     if local and (not expected or local != identifier):
-        digits = local[2:] if local.startswith("id") else local
-        leaked = value_leaks(app, [digits])
-        if (configuration == TESTFLIGHT and store_link_id == local
-                and not store_link_identifier_problems(configuration, store_link_id)
-                and not info_names_outside_store_link_key(app, [digits])):
-            leaked = [name for name in leaked if name != "Info.plist"]
-        problems.extend(f"{name}: holds the App Store identifier of the local configuration" for name in leaked)
+        problems.extend(f"{name}: holds the App Store identifier of the local configuration"
+                        for name in value_leaks(app, [local[2:] if local.startswith("id") else local]))
     fragments: dict[str, set[bytes]] = {}
     for binary in feedback_files(app):
         code = host_code(binary)
@@ -1790,86 +1702,6 @@ def review_problems(
         problems.append(
             f"the application lacks the Review strings table in {', '.join(absent)} though the build names "
             "an App Store identifier")
-    return problems, compiled
-
-
-def store_link_tables(app: Path) -> list[Path]:
-    """The StoreLink table of any language, anywhere in the bundle, found by its file name."""
-    return [path for path in lproj_files(app)
-            if path.stem == STORE_LINK_TABLE and path.suffix in (".strings", ".stringsdict")]
-
-
-def store_link_strings(app: Path) -> list[str]:
-    """The String Catalog tables of the bundle that hold a word of the App Store notice."""
-    found = []
-    for path in lproj_files(app, "*.strings"):
-        try:
-            with path.open("rb") as handle:
-                table = plistlib.load(handle)
-        except (OSError, plistlib.InvalidFileException, ValueError):
-            continue
-        if isinstance(table, dict) and any(
-                word in text for key, value in table.items() for text in (str(key), str(value))
-                for word in STORE_LINK_WORDS):
-            found.append(str(path.relative_to(app)))
-    return found
-
-
-def store_link_problems(app: Path, configuration: str, identifier: str) -> tuple[list[str], bool]:
-    """Whether the product holds the App Store notice as the build said it would, and whether it
-    holds it. `identifier` is the build setting STORE_LINK_ID: the local configuration's
-    identifier in the TestFlight configuration, empty otherwise, or the placeholder a test script
-    arranged. The local identifier's digits in the other files of the bundle are Review on the
-    App Store's to find (`review_problems`), which knows this notice's key. The identifier is
-    never printed."""
-    problems = store_link_identifier_problems(configuration, identifier)
-    expected = bool(identifier) and not problems
-    fragments: dict[str, set[bytes]] = {}
-    for binary in feedback_files(app):
-        code = host_code(binary)
-        if code is None:
-            continue
-        data = without_debug_map(*code, PATH_STABS)
-        present = {fragment for fragment in STORE_LINK_FRAGMENTS if fragment in data}
-        if present:
-            fragments[str(binary.relative_to(app))] = present
-    try:
-        with (app / "Info.plist").open("rb") as handle:
-            keyed = plistlib.load(handle).get(STORE_LINK_KEY)
-    except (OSError, plistlib.InvalidFileException, ValueError):
-        keyed = None
-    tables = store_link_tables(app)
-    words = store_link_strings(app)
-    holders = plist_holders(app, STORE_LINK_KEY)
-    compiled = bool(fragments) or bool(holders) or bool(tables) or bool(words)
-    if not expected:
-        why = (f"{configuration} has no App Store notice" if configuration == APP_STORE
-               else "the build names no App Store identifier for it")
-        if identifier:
-            problems.append("the App Store notice: the build names an identifier that cannot be used")
-        for name, present in fragments.items():
-            problems.append(
-                f"{name}: carries the App Store notice ({', '.join(sorted(item.decode() for item in present))}) "
-                f"though {why}")
-        problems.extend(f"{path}: has {STORE_LINK_KEY} though {why}" for path in holders)
-        problems.extend(f"{path.relative_to(app)}: is the StoreLink strings table though {why}"
-                        for path in tables)
-        problems.extend(f"{name}: has App Store notice strings though {why}" for name in words)
-        return problems, compiled
-    if keyed != identifier:
-        problems.append(f"Info.plist: {STORE_LINK_KEY} must be the App Store identifier the build names")
-    code = set().union(*fragments.values()) if fragments else set()
-    missing = [item.decode() for item in STORE_LINK_REQUIRED if item not in code]
-    if missing:
-        problems.append(
-            f"the application lacks the App Store notice ({', '.join(missing)}) though the build names "
-            "an App Store identifier for it")
-    absent = [language for language in FEEDBACK_LANGUAGES
-              if not (app / f"{language}.lproj" / f"{STORE_LINK_TABLE}.strings").is_file()]
-    if absent:
-        problems.append(
-            f"the application lacks the StoreLink strings table in {', '.join(absent)} though the build names "
-            "an App Store identifier for it")
     return problems, compiled
 
 
@@ -2208,8 +2040,6 @@ def planned_scans(options: argparse.Namespace) -> set[Scan]:
     elif options.tip_jar:
         feedback = follow_x = icp = review = False
         tip = True
-    elif options.store_link:
-        return set()
     elif options.review:
         feedback = follow_x = icp = tip = False
         review = True
@@ -2273,8 +2103,7 @@ def main() -> int:
     parser.add_argument(
         "--configuration", default="AppStore",
         help="the build configuration: AppStore, TestFlight (which has none of Buy me tokens, Review on the "
-             "App Store and the ICP filing number, and alone has the App Store notice), or another, whose "
-             "features the options below check")
+             "App Store and the ICP filing number), or another, whose features the options below check")
     parser.add_argument(
         "--feedback-address", default="",
         help="the build setting FEEDBACK_ADDRESS: the receiver the build names, "
@@ -2339,13 +2168,6 @@ def main() -> int:
     parser.add_argument(
         "--review", action="store_true",
         help="check Review on the App Store alone, for a configuration other than AppStore")
-    parser.add_argument(
-        "--store-link-id", default="",
-        help="the build setting STORE_LINK_ID: the App Store identifier the build names for the App Store "
-             "notice of TestFlight builds, empty when it names none")
-    parser.add_argument(
-        "--store-link", action="store_true",
-        help="check the App Store notice alone, for a configuration other than AppStore or TestFlight")
     parser.add_argument(
         "--developer-name", default="",
         help="the build setting SHEET_DEVELOPER_NAME: the developer's name the tip header shows, empty when none")
@@ -2434,17 +2256,10 @@ def check(options: argparse.Namespace) -> int:
         return 1 if found else 0
     if options.review:
         found, compiled = review_problems(
-            app, options.configuration, options.review_id, options.review_local_id, options.store_link_id)
+            app, options.configuration, options.review_id, options.review_local_id)
         for line in found:
             emit(line, error=True)
         emit(f"{app.name}: Review on the App Store is {'compiled in' if compiled else 'not compiled in'}"
-              f" ({options.configuration})")
-        return 1 if found else 0
-    if options.store_link:
-        found, compiled = store_link_problems(app, options.configuration, options.store_link_id)
-        for line in found:
-            emit(line, error=True)
-        emit(f"{app.name}: the App Store notice is {'compiled in' if compiled else 'not compiled in'}"
               f" ({options.configuration})")
         return 1 if found else 0
     if options.runtime or options.host_traces:
@@ -2522,13 +2337,9 @@ def check(options: argparse.Namespace) -> int:
     emit(f"{app.name}: Buy me tokens is {'compiled in' if tip_compiled else 'not compiled in'}")
 
     review, review_compiled = review_problems(
-        app, options.configuration, options.review_id, options.review_local_id, options.store_link_id)
+        app, options.configuration, options.review_id, options.review_local_id)
     problems.extend(review)
     emit(f"{app.name}: Review on the App Store is {'compiled in' if review_compiled else 'not compiled in'}")
-
-    store_link, store_link_compiled = store_link_problems(app, options.configuration, options.store_link_id)
-    problems.extend(store_link)
-    emit(f"{app.name}: the App Store notice is {'compiled in' if store_link_compiled else 'not compiled in'}")
 
     icp, icp_compiled = icp_problems(app, options.configuration, options.icp_number, options.icp_local_number)
     problems.extend(icp)
