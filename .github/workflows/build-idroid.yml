@@ -32,7 +32,7 @@ jobs:
 
       - name: Install build tools
         run: |
-          brew install cmake ninja
+          brew install cmake ninja meson pkg-config
 
       - name: Mount case-sensitive APFS for external/sources
         run: |
@@ -40,11 +40,21 @@ jobs:
           mkdir -p external/sources
           hdiutil attach /tmp/idroid_src.sparseimage -mountpoint external/sources
 
-      - name: Prepare dependencies
+      - name: Prepare and build iOS dependencies
         run: |
-          ./dependencies/prepare.sh --product all
+          ./dependencies/prepare.sh --product ios-network
+          ./dependencies/build-ios-network.sh --platform ios
 
-      - name: Fetch prebuilt Android 17 (LineageOS 24) & kernel release
+          ./dependencies/prepare.sh --product ios-storage
+          ./dependencies/build-ios-storage.sh
+
+          ./dependencies/prepare.sh --product ios-compression
+          ./dependencies/build-ios-zstd.sh
+
+          ./dependencies/prepare.sh --product apple-gpu-vulkan-experiment
+          ./dependencies/build-apple-gpu.sh --platform ios
+
+      - name: Fetch prebuilt Android 17 (LineageOS 24) release
         run: |
           mkdir -p .build/android/releases
           curl -fL --retry 3 -o /tmp/lineage24.tar.gz \
@@ -79,7 +89,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES 2>&1 | tee build/xcodebuild.log || (echo "=== BUILD FAILED ===" && tail -n 100 build/xcodebuild.log && exit 1)
+            AD_HOC_CODE_SIGNING_ALLOWED=YES 2>&1 | tee build/xcodebuild.log || (echo "=== ERRORS ===" && grep -E "error:|fatal error:" build/xcodebuild.log | head -n 40 && exit 1)
 
       - name: Package iDroid.ipa
         run: |
