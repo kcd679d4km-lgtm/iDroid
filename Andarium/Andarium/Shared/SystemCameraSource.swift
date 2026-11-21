@@ -16,8 +16,14 @@ struct CameraPlatform {
     /// This process, as the system reports it.
     static var system: CameraPlatform {
         let info = ProcessInfo.processInfo
+        let onVision: Bool
+        if #available(iOS 26.1, *) {
+            onVision = info.isiOSAppOnVision
+        } else {
+            onVision = false
+        }
         return CameraPlatform(
-            isiOSAppOnMac: info.isiOSAppOnMac, isiOSAppOnVision: info.isiOSAppOnVision,
+            isiOSAppOnMac: info.isiOSAppOnMac, isiOSAppOnVision: onVision,
             hasFrontCamera: { SystemCameraSource.hasFrontCamera })
     }
 
