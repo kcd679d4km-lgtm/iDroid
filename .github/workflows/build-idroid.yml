@@ -15,9 +15,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Fix script permissions
+      - name: Fix script permissions and line endings
         run: |
           find . -type f \( -name "*.sh" -o -name "*.py" \) -exec chmod +x {} +
+          find dependencies -type f \( -name "*.patch" -o -name "*.tsv" -o -name "*.sh" \) -exec sed -i '' 's/\r$//' {} +
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@users.noreply.github.com"
 
       - name: Select latest Xcode
         run: |
