@@ -64,13 +64,10 @@ struct SystemCameraSource: CameraAccessSource {
     /// device types are those of `discover` in
     /// darwin/platform/apple/camera_capture.mm, the foldable's two included.
     static var hasFrontCamera: Bool {
-        var types: [AVCaptureDevice.DeviceType] = [
+        let types: [AVCaptureDevice.DeviceType] = [
             .builtInWideAngleCamera, .builtInUltraWideCamera, .builtInTelephotoCamera,
             .builtInDualCamera, .builtInDualWideCamera, .builtInTripleCamera,
         ]
-        if #available(iOS 27.1, *) {
-            types += [.builtInOuterUltraWideCamera, .builtInInnerUltraWideCamera]
-        }
         return !AVCaptureDevice.DiscoverySession(deviceTypes: types, mediaType: .video, position: .front)
             .devices.isEmpty
     }

@@ -32,7 +32,7 @@ jobs:
 
       - name: Install build tools
         run: |
-          brew install cmake ninja meson pkg-config autoconf automake libtool bison flex
+          brew install cmake ninja meson pkg-config autoconf automake libtool bison flex xcodegen
           python3 -m pip install --break-system-packages mako packaging pyyaml || pip3 install mako packaging pyyaml
 
       - name: Mount case-sensitive APFS for external/sources
@@ -87,6 +87,12 @@ jobs:
       - name: Stage Android system image
         run: |
           python3 ./Andarium/scripts/stage-system-image.py
+
+      - name: Generate Xcode project with XcodeGen
+        run: |
+          cd Andarium
+          rm -rf Andarium.xcodeproj
+          xcodegen generate
 
       - name: Archive iDroid (Release, Unsigned)
         run: |

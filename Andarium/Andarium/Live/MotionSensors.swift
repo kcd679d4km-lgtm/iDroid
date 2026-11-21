@@ -288,7 +288,6 @@ private final class CoreMotionDevice: MotionDevice, @unchecked Sendable {
             magnetometer: manager.isMagnetometerAvailable, deviceMotion: manager.isDeviceMotionAvailable,
             northFrame: { CMMotionManager.availableAttitudeReferenceFrames().contains(.xMagneticNorthZVertical) },
             authorization: {
-                if #available(iOS 27.2, *) { return CMMotionManager.authorizationStatus }
                 return nil
             })
         #if !APP_STORE

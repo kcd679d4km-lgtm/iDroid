@@ -33,32 +33,7 @@ final class FoldSceneReader {
     var reportsHinge: Bool { hinge != nil }
 
     func attach(to view: UIView) {
-        guard #available(iOS 27.1, *), interaction == nil, UIDevice.current.userInterfaceIdiom == .phone else {
-            return
-        }
-        let interaction = UIHingeInteraction { [weak self] _, update in
-            MainActor.assumeIsolated { self?.hingeReported(update.hinge) }
-        }
-        view.addInteraction(interaction)
-        self.interaction = interaction
-    }
-
-    /// Only an update without a hinge (the interaction left the view
-    /// hierarchy's display) clears the reading. A status the system adds or
-    /// cannot tell (`.unknown`) leaves the last one in place, so that a blip in
-    /// the sensor does not swap the session's layout for the phone's and back.
-    @available(iOS 27.1, *)
-    private func hingeReported(_ reported: UIHinge?) {
-        let next: FoldReading.Hinge? = switch reported?.status {
-        case nil: nil
-        case .closed?: .closed
-        case .partiallyOpen?: .partiallyOpen
-        case .fullyOpen?: .fullyOpen
-        default: hinge
-        }
-        guard next != hinge else { return }
-        hinge = next
-        hingeDidChange?()
+        _ = view
     }
 
     /// The scene root's view as the system reports it now; nil on a display
@@ -67,12 +42,7 @@ final class FoldSceneReader {
         #if !APP_STORE
         if let stub { return stub() }
         #endif
-        guard #available(iOS 27.1, *), hinge != nil else { return nil }
-        let window = view.bounds
-        let safe = window.inset(by: view.safeAreaInsets)
-        let division = view.reservedRegions(kind: .division, options: .includeInactive).first
-            .map { FoldReading.Region(frame: $0.frame, isActive: $0.isActive) }
-        let occlusions = view.reservedRegions(kind: .occlusion).map(\.frame)
-        return FoldReading(window: window, safeArea: safe, hinge: hinge, division: division, occlusions: occlusions)
+        _ = view
+        return nil
     }
 }
