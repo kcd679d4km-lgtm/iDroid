@@ -159,6 +159,7 @@ PhotoOutputFacts keepStillOrientation(AVCapturePhotoOutput* output, const Presen
 // The dynamic aspect ratios a device format lists (iOS 26), as the mask of aspectRatioBit.
 std::uint8_t aspectRatiosOf(AVCaptureDeviceFormat* format)
 {
+#ifdef __IPHONE_26_0
     std::uint8_t mask = 0;
     for (AVCaptureAspectRatio ratio in format.supportedDynamicAspectRatios) {
         if ([ratio isEqualToString:AVCaptureAspectRatio1x1]) mask |= aspectRatioBit(CameraAspectRatio::r1x1);
@@ -168,8 +169,13 @@ std::uint8_t aspectRatiosOf(AVCaptureDeviceFormat* format)
         else if ([ratio isEqualToString:AVCaptureAspectRatio3x4]) mask |= aspectRatioBit(CameraAspectRatio::r3x4);
     }
     return mask;
+#else
+    (void)format;
+    return 0;
+#endif
 }
 
+#ifdef __IPHONE_26_0
 AVCaptureAspectRatio avRatioOf(CameraAspectRatio ratio)
 {
     switch (ratio) {
@@ -190,6 +196,7 @@ CameraAspectRatio ratioOfAV(AVCaptureAspectRatio ratio)
         if (ratio != nil && [ratio isEqualToString:avRatioOf(candidate)]) return candidate;
     return CameraAspectRatio::none;
 }
+#endif
 
 CameraDeviceType deviceTypeOf(AVCaptureDeviceType type)
 {
@@ -200,10 +207,12 @@ CameraDeviceType deviceTypeOf(AVCaptureDeviceType type)
     if ([type isEqualToString:AVCaptureDeviceTypeBuiltInDualWideCamera]) return CameraDeviceType::dualWide;
     if ([type isEqualToString:AVCaptureDeviceTypeBuiltInTripleCamera]) return CameraDeviceType::triple;
     if ([type isEqualToString:AVCaptureDeviceTypeExternal]) return CameraDeviceType::external;
+#ifdef __IPHONE_27_1
     if (@available(iOS 27.1, *)) {
         if ([type isEqualToString:AVCaptureDeviceTypeBuiltInOuterUltraWideCamera]) return CameraDeviceType::outerUltraWide;
         if ([type isEqualToString:AVCaptureDeviceTypeBuiltInInnerUltraWideCamera]) return CameraDeviceType::innerUltraWide;
     }
+#endif
     return CameraDeviceType::other;
 }
 
@@ -448,11 +457,13 @@ std::vector<Entry> discover()
     // constants are null, so they are named only where they exist. The
     // application's Camera row asks the same types for a front camera
     // (Andarium's SystemCameraSource.hasFrontCamera).
+#ifdef __IPHONE_27_1
     if (@available(iOS 27.1, *)) {
         [types addObjectsFromArray:@[
             AVCaptureDeviceTypeBuiltInOuterUltraWideCamera, AVCaptureDeviceTypeBuiltInInnerUltraWideCamera
         ]];
     }
+#endif
 #endif
     AVCaptureDeviceDiscoverySession* session =
         [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:types
@@ -468,7 +479,7 @@ std::vector<Entry> discover()
         for (AVCaptureDeviceFormat* format in device.formats) {
             const CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription);
             squareFormats = squareFormats || (dimensions.width > 0 && dimensions.width == dimensions.height);
-#if TARGET_OS_IOS
+#if TARGET_OS_IOS && defined(__IPHONE_26_0)
             dynamicRatios = dynamicRatios || format.supportedDynamicAspectRatios.count != 0;
 #endif
         }
@@ -492,9 +503,11 @@ std::vector<Entry> discover()
         if ([type isEqualToString:AVCaptureDeviceTypeBuiltInWideAngleCamera]) info.lens = CameraLensKind::wide;
 #if TARGET_OS_IOS
         bool ultraWide = [type isEqualToString:AVCaptureDeviceTypeBuiltInUltraWideCamera];
+#ifdef __IPHONE_27_1
         if (@available(iOS 27.1, *))
             ultraWide = ultraWide || [type isEqualToString:AVCaptureDeviceTypeBuiltInOuterUltraWideCamera] ||
                 [type isEqualToString:AVCaptureDeviceTypeBuiltInInnerUltraWideCamera];
+#endif
         if (ultraWide) info.lens = CameraLensKind::ultraWide;
         else if ([type isEqualToString:AVCaptureDeviceTypeBuiltInTelephotoCamera]) info.lens = CameraLensKind::telephoto;
         else if (device.virtualDevice) info.lens = CameraLensKind::zoom;
@@ -871,12 +884,17 @@ struct RatioFacts {
 RatioFacts ratioFactsOf(AVCaptureDevice* device, CameraAspectRatio pinned)
 {
     RatioFacts facts;
+#ifdef __IPHONE_26_0
     facts.known = true;
     facts.pinned = pinned;
     facts.now = ratioOfAV(device.dynamicAspectRatio);
     const CMVideoDimensions dimensions = device.dynamicDimensions;
     facts.width = std::uint32_t(std::max(0, int(dimensions.width)));
     facts.height = std::uint32_t(std::max(0, int(dimensions.height)));
+#else
+    (void)device;
+    (void)pinned;
+#endif
     return facts;
 }
 #endif
@@ -907,7 +925,7 @@ bool activate(AVCaptureDevice* device, const Anchor& anchor, const std::optional
     @try {
         // A format the session does not take raises instead of failing.
         if (device.activeFormat != anchor.format) device.activeFormat = anchor.format;
-#if TARGET_OS_IOS
+#if TARGET_OS_IOS && defined(__IPHONE_26_0)
         if (pinRatio && anchor.facts.pinnedRatio != CameraAspectRatio::none) {
             // The change is asked for before the device is told, so that it is under way for whatever reads it, and a completion
             // that comes at once is the change's own; a device that already holds the ratio completes it explicitly.
