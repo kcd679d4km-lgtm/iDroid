@@ -41,7 +41,15 @@ jobs:
           mkdir -p external/sources
           hdiutil attach /tmp/idroid_src.sparseimage -mountpoint external/sources
 
+      - name: Cache built iOS dependencies
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: .build/dependencies
+          key: ios-deps-${{ hashFiles('dependencies/manifest.tsv', 'dependencies/build-*.sh') }}
+
       - name: Prepare and build iOS dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true'
         run: |
           ./dependencies/prepare.sh --product ios-network
           ./dependencies/build-ios-network.sh --platform ios
