@@ -108,7 +108,7 @@ jobs:
             archive \
             PRODUCT_BUNDLE_IDENTIFIER=com.idroid.app \
             INFOPLIST_KEY_CFBundleDisplayName=iDroid \
-            IPHONEOS_DEPLOYMENT_TARGET=18.0 \
+            IPHONEOS_DEPLOYMENT_TARGET=26.0 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
