@@ -342,12 +342,7 @@ public:
                       if (const auto flags = weakNotifications.lock())
                           flags->signal(flags->configurationChanged);
                     }];
-        /* iOS 27 replaces the interruption notification with two: the session
-         * becoming inactive, which also reports the app's own deactivations,
-         * and the system's resumption recommendation. An interruption is a
-         * deactivation that carries an interruption context. Every
-         * recommendation ends the interruption; whether the sink takes the
-         * session back at once depends on its advice (see endInterruption). */
+#ifdef __IPHONE_27_0
         deactivationObserver_ = [[NSNotificationCenter defaultCenter]
             addObserverForName:AVAudioSessionDidBecomeInactiveNotification
                         object:[AVAudioSession sharedInstance]
@@ -380,6 +375,32 @@ public:
                       }
                       flags->signal(flags->interruptionEnded);
                     }];
+#else
+        deactivationObserver_ = [[NSNotificationCenter defaultCenter]
+            addObserverForName:AVAudioSessionInterruptionNotification
+                        object:[AVAudioSession sharedInstance]
+                         queue:nil
+                    usingBlock:^(NSNotification* notification) {
+                      const auto flags = weakNotifications.lock();
+                      if (!flags)
+                          return;
+                      const NSNumber* type =
+                          notification.userInfo[AVAudioSessionInterruptionTypeKey];
+                      if (type.unsignedIntegerValue == AVAudioSessionInterruptionTypeBegan) {
+                          flags->signal(flags->interruptionBegan);
+                      } else if (type.unsignedIntegerValue == AVAudioSessionInterruptionTypeEnded) {
+                          const NSNumber* opts =
+                              notification.userInfo[AVAudioSessionInterruptionOptionKey];
+                          if ((opts.unsignedIntegerValue &
+                                  AVAudioSessionInterruptionOptionShouldResume) != 0) {
+                              flags->resumeRecommended.store(
+                                  true, std::memory_order_release);
+                          }
+                          flags->signal(flags->interruptionEnded);
+                      }
+                    }];
+        resumptionObserver_ = nil;
+#endif
 #endif
     }
 
@@ -1037,7 +1058,11 @@ private:
                       // of after the player's own start-up.
                       if (running) {
                           AVAudioPlayerNode* const player = output.player;
+#ifdef __IPHONE_27_0
                           (void)[player playAndReturnError:&error];
+#else
+                          [player play];
+#endif
                           // The engine reports that it runs well before the
                           // audio hardware delivers its first cycle: a fifth
                           // of a second has been measured on the iPad mini
@@ -1121,7 +1146,12 @@ private:
             }
             measureOutputLatency();
             leaveMute();
+#ifdef __IPHONE_27_0
             playing = [player_ playAndReturnError:&error];
+#else
+            [player_ play];
+            playing = YES;
+#endif
         } @catch (NSException*) {
         }
         if (playing) {
@@ -1502,8 +1532,14 @@ private:
         @try {
             NSError* error = nil;
             measureOutputLatency();
+#ifdef __IPHONE_27_0
             if ([player_ playAndReturnError:&error])
                 return OutputStart::running;
+#else
+            (void)error;
+            [player_ play];
+            return OutputStart::running;
+#endif
         } @catch (NSException*) {
         }
         return OutputStart::failed;

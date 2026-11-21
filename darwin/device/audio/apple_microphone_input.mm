@@ -237,12 +237,7 @@ public:
     {
 #if TARGET_OS_IPHONE
         const std::weak_ptr<Capture> weak = capture_;
-        /* iOS 27 replaces the interruption notification with two, which the
-         * playback sink observes too: the session becoming inactive, which
-         * also reports the app's own deactivations (its release of the
-         * session when the microphone stops), and the system's resumption
-         * recommendation. An interruption is a deactivation that carries an
-         * interruption context. */
+#ifdef __IPHONE_27_0
         deactivationObserver_ = [NSNotificationCenter.defaultCenter
             addObserverForName:AVAudioSessionDidBecomeInactiveNotification
                         object:[AVAudioSession sharedInstance]
@@ -271,6 +266,28 @@ public:
                       capture->resume(context.recommendation ==
                           AVAudioSessionResumptionRecommendationShouldResume);
                     }];
+#else
+        deactivationObserver_ = [NSNotificationCenter.defaultCenter
+            addObserverForName:AVAudioSessionInterruptionNotification
+                        object:[AVAudioSession sharedInstance]
+                         queue:nil
+                    usingBlock:^(NSNotification* notification) {
+                      const auto capture = weak.lock();
+                      if (!capture)
+                          return;
+                      const NSNumber* type =
+                          notification.userInfo[AVAudioSessionInterruptionTypeKey];
+                      if (type.unsignedIntegerValue == AVAudioSessionInterruptionTypeBegan) {
+                          capture->interrupt();
+                      } else if (type.unsignedIntegerValue == AVAudioSessionInterruptionTypeEnded) {
+                          const NSNumber* opts =
+                              notification.userInfo[AVAudioSessionInterruptionOptionKey];
+                          capture->resume((opts.unsignedIntegerValue &
+                              AVAudioSessionInterruptionOptionShouldResume) != 0);
+                      }
+                    }];
+        resumptionObserver_ = nil;
+#endif
 #endif
     }
 
